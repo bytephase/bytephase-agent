@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BytePhase Agent - Settings</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-content">
+        <img src="../assets/bytephase-logo.png" alt="BytePhase Logo" class="header-logo" id="headerLogo" onerror="this.style.display='none'">
+        <div class="header-text">
+          <h1>BytePhase Agent</h1>
+          <p>Connect your Tally software to the cloud</p>
+        </div>
+      </div>
+    </header>
+
+    <div class="tabs">
+      <button class="tab-button active" onclick="openTab('setup')">Setup</button>
+      <button class="tab-button" onclick="openTab('status')">Status</button>
+      <button class="tab-button" onclick="openTab('logs')">Logs</button>
+    </div>
+
+    <!-- Setup Tab -->
+    <div id="setup" class="tab-content active">
+      <div class="card">
+        <h2>Agent Configuration</h2>
+
+        <div class="status-badge" id="registrationStatus">
+          <span class="badge badge-warning">Not Registered</span>
+        </div>
+
+        <form id="configForm">
+          <div class="form-group">
+            <label for="cloudUrl">Cloud Service URL</label>
+            <input type="text" id="cloudUrl" placeholder="https://your-server.com" required>
+            <small>URL of your Laravel Tally Connect service</small>
+          </div>
+
+          <div class="form-group">
+            <label for="apiKey">API Key</label>
+            <input type="password" id="apiKey" placeholder="Enter your API key" required>
+            <small>Get this from your cloud service admin panel</small>
+          </div>
+
+          <div class="form-group">
+            <label for="agentId">Agent ID</label>
+            <input type="text" id="agentId" placeholder="agent_123" required>
+            <small>Unique identifier for this agent</small>
+          </div>
+
+          <div class="form-group">
+            <label for="shopId">Shop ID</label>
+            <input type="text" id="shopId" placeholder="shop_123" required>
+            <small>Your shop/location identifier</small>
+          </div>
+
+          <div class="button-group">
+            <button type="submit" class="btn btn-primary">Save & Start</button>
+            <button type="button" class="btn btn-secondary" onclick="testTallyConnection()">Test Tally</button>
+          </div>
+        </form>
+
+        <div class="divider"></div>
+
+        <div class="danger-zone">
+          <h3>Danger Zone</h3>
+          <button class="btn btn-danger" onclick="clearConfiguration()">Clear Configuration</button>
+          <small>This will remove all saved credentials and stop the agent</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Tab -->
+    <div id="status" class="tab-content">
+      <div class="card">
+        <h2>Agent Status</h2>
+
+        <div class="status-grid">
+          <div class="status-item">
+            <div class="status-label">Registration</div>
+            <div class="status-value" id="statusRegistered">-</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Tally Connection</div>
+            <div class="status-value" id="statusTally">-</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Polling Status</div>
+            <div class="status-value" id="statusPolling">-</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Tally Version</div>
+            <div class="status-value" id="statusVersion">-</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Jobs Processed</div>
+            <div class="status-value" id="statusJobsProcessed">0</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Jobs Failed</div>
+            <div class="status-value" id="statusJobsFailed">0</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Queue Pending</div>
+            <div class="status-value" id="statusQueuePending">0</div>
+          </div>
+
+          <div class="status-item">
+            <div class="status-label">Last Poll</div>
+            <div class="status-value" id="statusLastPoll">Never</div>
+          </div>
+        </div>
+
+        <div class="button-group">
+          <button class="btn btn-primary" onclick="refreshStatus()">Refresh Status</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Logs Tab -->
+    <div id="logs" class="tab-content">
+      <div class="card">
+        <h2>Recent Activity</h2>
+        <div id="logsContainer" class="logs-container">
+          <p class="text-muted">Logs will appear here...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

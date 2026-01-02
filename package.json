@@ -1,0 +1,59 @@
+{
+  "name": "bytephase-agent",
+  "version": "1.0.0",
+  "description": "BytePhase Agent - Desktop agent for Tally integration",
+  "main": "index.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "tally",
+    "electron",
+    "agent",
+    "bytephase"
+  ],
+  "author": "Bytephase",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "electron-store": "^8.1.0",
+    "node-machine-id": "^1.1.12",
+    "sql.js": "^1.13.0",
+    "uuid": "^9.0.1",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "electron": "^39.2.7",
+    "electron-builder": "^24.9.1",
+    "electron-rebuild": "^3.2.9"
+  },
+  "build": {
+    "appId": "com.bytephase.agent",
+    "productName": "BytePhase Agent",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist",
+      "!node_modules",
+      "!.git"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    }
+  }
+}

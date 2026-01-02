@@ -1,0 +1,15 @@
+{
+  "cloudUrl": "http://localhost:8000",
+  "tallyHost": "localhost",
+  "tallyPort": 9000,
+  "pollInterval": 30000,
+  "pollIntervalMin": 10000,
+  "pollIntervalMax": 300000,
+  "maxRetries": 3,
+  "backoffMultiplier": 2,
+  "requestTimeout": 10000,
+  "offlineQueueMaxSize": 1000,
+  "logLevel": "info",
+  "autoUpdate": true,
+  "systemTray": true
+}

@@ -1,0 +1,39 @@
+{
+  "ERP9": {
+    "port": 9000,
+    "xml_version": "5.5",
+    "supported_features": [
+      "vouchers",
+      "ledgers",
+      "stock_items",
+      "basic_reports"
+    ],
+    "limitations": [
+      "No batch operations",
+      "Limited concurrent requests"
+    ]
+  },
+  "Prime": {
+    "port": 9000,
+    "xml_version": "7.0",
+    "supported_features": [
+      "vouchers",
+      "ledgers",
+      "stock_items",
+      "advanced_reports",
+      "batch_operations"
+    ],
+    "limitations": []
+  },
+  "PrimeServer": {
+    "port": 9000,
+    "xml_version": "7.2",
+    "connection_type": "server",
+    "supported_features": [
+      "all",
+      "multi_company",
+      "concurrent_access"
+    ],
+    "limitations": []
+  }
+}
