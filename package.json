@@ -34,6 +34,12 @@
   "build": {
     "appId": "com.bytephase.agent",
     "productName": "BytePhase Agent",
+    "protocols": [
+      {
+        "name": "BytePhase Protocol",
+        "schemes": ["bytephase"]
+      }
+    ],
     "directories": {
       "output": "dist"
     },

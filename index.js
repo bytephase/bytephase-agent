@@ -6,6 +6,10 @@ const authService = require('./services/auth.service');
 const tallyService = require('./services/tally.service');
 const pollingService = require('./services/polling.service');
 const queueService = require('./services/queue.service');
+const deepLinkService = require('./services/deeplink.service');
+
+// Utilities
+const NotificationHelper = require('./utils/notification.helper');
 
 let tray = null;
 let settingsWindow = null;
@@ -65,6 +69,51 @@ function addLog(level, message) {
 }
 
 /**
+ * Protocol registration for bytephase:// deep links
+ */
+if (process.defaultApp) {
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('bytephase', process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  app.setAsDefaultProtocolClient('bytephase');
+}
+
+/**
+ * Single instance lock - ensures only one instance of the app runs
+ */
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  console.log('[APP] Another instance is already running. Sending deep link and quitting...');
+  app.quit();
+} else {
+  // Handle deep links from second instance (warm start)
+  app.on('second-instance', async (event, commandLine, workingDirectory) => {
+    console.log('[APP] Second instance detected, processing deep link...');
+
+    // Extract deep link URL from command line
+    const deeplinkUrl = commandLine.find(arg => arg.startsWith('bytephase://'));
+
+    if (deeplinkUrl) {
+      await handleDeepLink(deeplinkUrl);
+    }
+
+    // Focus settings window if open
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.focus();
+    }
+  });
+
+  // macOS: Handle deep links via 'open-url' event
+  app.on('open-url', async (event, url) => {
+    event.preventDefault();
+    console.log('[APP] Deep link opened (macOS):', url);
+    await handleDeepLink(url);
+  });
+}
+
+/**
  * Initialize application
  */
 app.whenReady().then(async () => {
@@ -79,13 +128,21 @@ app.whenReady().then(async () => {
   // Check if agent is registered
   agentStatus.registered = authService.isRegistered();
 
-  if (agentStatus.registered) {
-    // Start polling service
-    await pollingService.start();
-    agentStatus.polling = true;
-    console.log('[APP] Polling service started');
+  // Handle deep link on cold start (Windows/Linux)
+  const deeplinkUrl = process.argv.find(arg => arg.startsWith('bytephase://'));
+  if (deeplinkUrl) {
+    console.log('[APP] Cold start with deep link:', deeplinkUrl);
+    await handleDeepLink(deeplinkUrl);
   } else {
-    console.log('[APP] Agent not registered. Please configure settings.');
+    // Normal startup flow
+    if (agentStatus.registered) {
+      // Start polling service
+      await pollingService.start();
+      agentStatus.polling = true;
+      console.log('[APP] Polling service started');
+    } else {
+      console.log('[APP] Agent not registered. Please configure settings.');
+    }
   }
 
   // TEMP: Always auto-open settings for testing
@@ -99,6 +156,11 @@ app.whenReady().then(async () => {
   // Cleanup old queue items every hour
   setInterval(() => {
     queueService.cleanup();
+  }, 60 * 60 * 1000);
+
+  // Cleanup expired token nonces every hour
+  setInterval(() => {
+    require('./services/token.service').cleanupExpiredNonces();
   }, 60 * 60 * 1000);
 });
 
@@ -219,6 +281,53 @@ function openSettings() {
   settingsWindow.on('closed', () => {
     settingsWindow = null;
   });
+}
+
+/**
+ * Handle deep link URL
+ * @param {string} url - The deep link URL (bytephase://...)
+ */
+async function handleDeepLink(url) {
+  console.log('[APP] Processing deep link:', url);
+
+  try {
+    // Process the deep link
+    const result = await deepLinkService.processDeepLink(url);
+
+    if (result.success) {
+      // Show success notification
+      NotificationHelper.showConnectionSuccess(result.shopId);
+
+      // Start polling if not already running
+      if (!agentStatus.polling) {
+        await pollingService.start();
+        agentStatus.polling = true;
+        console.log('[APP] Polling started after deep link connection');
+      }
+
+      agentStatus.registered = true;
+      updateTrayMenu();
+
+      console.log('[APP] Deep link connection successful');
+
+    } else {
+      // Show error notification
+      NotificationHelper.showConnectionError(result.error);
+
+      // Open settings window to allow manual entry
+      console.error('[APP] Deep link connection failed:', result.error);
+      setTimeout(() => {
+        openSettings();
+      }, 2000); // Delay to allow notification to show
+    }
+
+  } catch (error) {
+    console.error('[APP] Error handling deep link:', error);
+    NotificationHelper.showConnectionError(error.message);
+    setTimeout(() => {
+      openSettings();
+    }, 2000);
+  }
 }
 
 /**
