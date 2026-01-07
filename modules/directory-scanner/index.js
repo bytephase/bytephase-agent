@@ -12,6 +12,7 @@
 const BaseModule = require('../../core/base-module');
 const ScannerService = require('./scanner.service');
 const HtmlGenerator = require('./html-generator');
+const DevExtremeFormatter = require('./devextreme-formatter');
 const { dialog } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
@@ -99,6 +100,9 @@ class DirectoryScannerModule extends BaseModule {
 
       case 'scanner.export.json':
         return await this.exportToJson(job);
+
+      case 'scanner.export.devextreme':
+        return await this.exportToDevExtreme(job);
 
       case 'scanner.cancel':
         return await this.cancelScan(job);
@@ -287,6 +291,91 @@ class DirectoryScannerModule extends BaseModule {
   }
 
   /**
+   * Export scan result to DevExtreme FileManager format
+   */
+  async exportToDevExtreme(job) {
+    const {
+      tree,
+      outputPath,
+      format = 'hierarchical', // 'hierarchical', 'flat', or 'datasource'
+      includeRoot = false,
+      pretty = true
+    } = job.payload;
+
+    if (!tree) {
+      throw new Error('tree data is required');
+    }
+
+    console.log('[SCANNER] Exporting to DevExtreme format...');
+
+    let data;
+    let formatType;
+
+    // Choose format type
+    switch (format) {
+      case 'flat':
+        data = DevExtremeFormatter.flatten(tree, { includeRoot });
+        formatType = 'flat array with parentKey references';
+        break;
+
+      case 'datasource':
+        data = DevExtremeFormatter.createDataSource(tree, {
+          hierarchical: true,
+          includeRoot
+        });
+        formatType = 'DevExtreme data source configuration';
+        break;
+
+      case 'hierarchical':
+      default:
+        data = DevExtremeFormatter.transform(tree, { includeRoot });
+        formatType = 'hierarchical tree structure';
+        break;
+    }
+
+    // Get statistics
+    const statistics = DevExtremeFormatter.getStatistics(tree);
+
+    const result = {
+      format: format,
+      formatType: formatType,
+      data: data,
+      statistics: statistics,
+      generatedAt: new Date().toISOString()
+    };
+
+    const json = pretty
+      ? JSON.stringify(result, null, 2)
+      : JSON.stringify(result);
+
+    // If outputPath specified, save to file
+    if (outputPath) {
+      await fs.writeFile(outputPath, json, 'utf8');
+
+      return {
+        success: true,
+        format: format,
+        formatType: formatType,
+        outputPath: outputPath,
+        size: Buffer.byteLength(json, 'utf8'),
+        statistics: statistics,
+        data: null // Don't return data if saved to file
+      };
+    }
+
+    // Otherwise return data
+    return {
+      success: true,
+      format: format,
+      formatType: formatType,
+      data: result.data,
+      statistics: statistics,
+      size: Buffer.byteLength(json, 'utf8'),
+      outputPath: null
+    };
+  }
+
+  /**
    * Cancel ongoing scan
    */
   async cancelScan(job) {
@@ -379,6 +468,7 @@ class DirectoryScannerModule extends BaseModule {
       'scanner.directory.scan',
       'scanner.export.html',
       'scanner.export.json',
+      'scanner.export.devextreme',
       'scanner.cancel'
     ];
   }

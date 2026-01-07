@@ -143,11 +143,42 @@ class HtmlGenerator {
       border-radius: 10px;
       font-size: 16px;
       transition: border-color 0.2s;
+      margin-bottom: 12px;
     }
 
     .search-input:focus {
       outline: none;
       border-color: #667eea;
+    }
+
+    .tree-controls {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-bottom: 12px;
+    }
+
+    .control-btn {
+      padding: 10px 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    }
+
+    .control-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .control-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 4px rgba(102, 126, 234, 0.3);
     }
 
     .tree {
@@ -157,28 +188,50 @@ class HtmlGenerator {
     }
 
     .tree-item {
-      padding: 6px 0;
+      padding: 4px 8px;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: all 0.15s ease;
       border-radius: 4px;
-      padding-left: 10px;
+      margin: 1px 0;
+      user-select: none;
     }
 
     .tree-item:hover {
-      background: #f8f9fa;
+      background: #f1f3f5;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+
+    .tree-item:active {
+      background: #e9ecef;
     }
 
     .tree-item.directory {
       color: #667eea;
-      font-weight: 500;
+      font-weight: 600;
+    }
+
+    .tree-item.directory:hover {
+      color: #5568d3;
+      background: #f0f4ff;
     }
 
     .tree-item.file {
       color: #495057;
+      font-weight: 400;
+      cursor: default;
     }
 
-    .tree-item.collapsed > .children {
-      display: none;
+    .tree-item.file:hover {
+      background: #f8f9fa;
+    }
+
+    .tree-item.collapsed .toggle {
+      color: #94a3b8;
+    }
+
+    .tree-item:not(.collapsed) .toggle {
+      color: #667eea;
+      font-weight: bold;
     }
 
     .indent {
@@ -205,11 +258,22 @@ class HtmlGenerator {
 
     .toggle {
       display: inline-block;
-      width: 16px;
+      width: 18px;
       text-align: center;
-      margin-right: 5px;
+      margin-right: 6px;
       color: #94a3b8;
-      font-size: 12px;
+      font-size: 14px;
+      font-weight: bold;
+      transition: transform 0.2s ease, color 0.2s ease;
+    }
+
+    .tree-item.directory .toggle {
+      cursor: pointer;
+    }
+
+    .tree-item.directory:hover .toggle {
+      color: #667eea;
+      transform: scale(1.2);
     }
 
     .children {
@@ -298,6 +362,10 @@ class HtmlGenerator {
           id="search"
           placeholder="🔍 Search files and folders..."
         >
+        <div class="tree-controls">
+          <button class="control-btn" id="expand-all">📂 Expand All</button>
+          <button class="control-btn" id="collapse-all">📁 Collapse All</button>
+        </div>
       </div>
       <div class="tree" id="tree"></div>
       <div class="no-results" id="no-results" style="display: none;">
@@ -355,11 +423,13 @@ class HtmlGenerator {
         stats.maxDepth = Math.max(stats.maxDepth, depth);
 
         const item = document.createElement('div');
-        item.className = 'tree-item directory';
+        // Start collapsed by default (except root)
+        item.className = depth === 0 ? 'tree-item directory' : 'tree-item directory collapsed';
         item.dataset.path = node.path;
         item.dataset.name = node.name.toLowerCase();
 
-        const toggle = node.children && node.children.length > 0 ? '▼' : ' ';
+        const hasChildren = node.children && node.children.length > 0;
+        const toggle = hasChildren ? (depth === 0 ? '▼' : '►') : ' ';
 
         item.innerHTML = \`
           <span style="margin-left: \${indent}px">
@@ -372,7 +442,7 @@ class HtmlGenerator {
 
         parentElement.appendChild(item);
 
-        if (node.children && node.children.length > 0) {
+        if (hasChildren) {
           const childContainer = document.createElement('div');
           childContainer.className = 'children';
 
@@ -380,11 +450,32 @@ class HtmlGenerator {
             renderTree(child, childContainer, depth + 1);
           });
 
+          // Hide children by default if collapsed
+          if (depth > 0) {
+            childContainer.style.display = 'none';
+          }
+
           parentElement.appendChild(childContainer);
 
+          // Store reference to children for toggling
+          item.childrenContainer = childContainer;
+
+          // Click handler to expand/collapse
           item.addEventListener('click', (e) => {
             e.stopPropagation();
-            item.classList.toggle('collapsed');
+
+            const isCollapsed = item.classList.toggle('collapsed');
+            const toggleSpan = item.querySelector('.toggle');
+
+            // Toggle children visibility
+            if (item.childrenContainer) {
+              item.childrenContainer.style.display = isCollapsed ? 'none' : 'block';
+            }
+
+            // Update arrow icon
+            if (toggleSpan) {
+              toggleSpan.textContent = isCollapsed ? '►' : '▼';
+            }
           });
         }
       } else {
@@ -450,6 +541,47 @@ class HtmlGenerator {
         noResults.style.display = visibleCount === 0 ? 'block' : 'none';
         treeContainer.style.display = visibleCount === 0 ? 'none' : 'block';
       }, 300);
+    });
+
+    // Expand All functionality
+    document.getElementById('expand-all').addEventListener('click', () => {
+      const directories = document.querySelectorAll('.tree-item.directory');
+      directories.forEach(dir => {
+        dir.classList.remove('collapsed');
+
+        // Show children
+        if (dir.childrenContainer) {
+          dir.childrenContainer.style.display = 'block';
+        }
+
+        // Update arrow
+        const toggleSpan = dir.querySelector('.toggle');
+        if (toggleSpan && toggleSpan.textContent.trim() === '►') {
+          toggleSpan.textContent = '▼';
+        }
+      });
+    });
+
+    // Collapse All functionality
+    document.getElementById('collapse-all').addEventListener('click', () => {
+      const directories = document.querySelectorAll('.tree-item.directory');
+      directories.forEach((dir, index) => {
+        // Don't collapse the root directory (first one)
+        if (index > 0) {
+          dir.classList.add('collapsed');
+
+          // Hide children
+          if (dir.childrenContainer) {
+            dir.childrenContainer.style.display = 'none';
+          }
+
+          // Update arrow
+          const toggleSpan = dir.querySelector('.toggle');
+          if (toggleSpan && toggleSpan.textContent.trim() === '▼') {
+            toggleSpan.textContent = '►';
+          }
+        }
+      });
     });
   </script>
 </body>
