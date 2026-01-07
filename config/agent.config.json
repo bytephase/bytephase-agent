@@ -1,0 +1,41 @@
+{
+  "version": "2.0",
+  "agent": {
+    "id": null,
+    "shopId": null,
+    "cloudUrl": null,
+    "apiKey": null,
+    "pollInterval": 30000,
+    "autoStart": true
+  },
+  "modules": {
+    "tally": {
+      "enabled": true,
+      "config": {
+        "tallyHost": "localhost",
+        "tallyPort": 9000,
+        "tallyCompany": null,
+        "autoDetectVersion": true,
+        "timeout": 10000
+      }
+    },
+    "directory-scanner": {
+      "enabled": true,
+      "config": {
+        "maxDepth": 10,
+        "includeHidden": false,
+        "maxFileSize": 104857600,
+        "excludePatterns": [
+          "node_modules",
+          ".git",
+          "Thumbs.db",
+          ".DS_Store",
+          "$RECYCLE.BIN",
+          "System Volume Information"
+        ],
+        "calculateHashes": false,
+        "followSymlinks": false
+      }
+    }
+  }
+}

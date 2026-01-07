@@ -1,9 +1,14 @@
 const { app, Tray, Menu, nativeImage, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const fs = require('fs');
+
+// Core module system
+const moduleManager = require('./core/module-manager');
+const jobRouter = require('./core/job-router');
+const eventBus = require('./core/event-bus');
 
 // Services
 const authService = require('./services/auth.service');
-const tallyService = require('./services/tally.service');
 const pollingService = require('./services/polling.service');
 const queueService = require('./services/queue.service');
 const deepLinkService = require('./services/deeplink.service');
@@ -15,10 +20,10 @@ let tray = null;
 let settingsWindow = null;
 let agentStatus = {
   registered: false,
-  tallyRunning: false,
   polling: false,
   lastPoll: null,
-  stats: {}
+  stats: {},
+  modules: []
 };
 
 // Log buffer for UI display
@@ -117,10 +122,18 @@ if (!gotTheLock) {
  * Initialize application
  */
 app.whenReady().then(async () => {
+  console.log('[APP] BytePhase Agent v2.0 - Modular Architecture');
   console.log('[APP] Application started');
+
+  // Initialize module system
+  await initializeModules();
 
   // Initialize queue database
   await queueService.init();
+
+  // Set job router and module manager for polling service
+  pollingService.setJobRouter(jobRouter);
+  pollingService.setModuleManager(moduleManager);
 
   // Create system tray
   createTray();
@@ -145,7 +158,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  // TEMP: Always auto-open settings for testing
+  // Auto-open settings for testing (remove in production)
   setTimeout(() => {
     openSettings();
   }, 1000);
@@ -163,6 +176,50 @@ app.whenReady().then(async () => {
     require('./services/token.service').cleanupExpiredNonces();
   }, 60 * 60 * 1000);
 });
+
+/**
+ * Initialize module system
+ */
+async function initializeModules() {
+  console.log('[APP] Initializing module system...');
+
+  try {
+    // Load all modules from /modules directory
+    await moduleManager.loadAll();
+
+    // Load configuration
+    const configPath = path.join(__dirname, 'config', 'agent.config.json');
+    let config = {};
+
+    if (fs.existsSync(configPath)) {
+      const configData = fs.readFileSync(configPath, 'utf8');
+      config = JSON.parse(configData);
+    }
+
+    // Enable modules based on configuration
+    const moduleConfigs = config.modules || {};
+
+    for (const [moduleName, moduleConfig] of Object.entries(moduleConfigs)) {
+      if (moduleConfig.enabled) {
+        try {
+          await moduleManager.enable(moduleName, moduleConfig.config);
+          console.log(`[APP] Module enabled: ${moduleName}`);
+        } catch (error) {
+          console.error(`[APP] Failed to enable module ${moduleName}:`, error.message);
+        }
+      }
+    }
+
+    const counts = moduleManager.getCount();
+    console.log(`[APP] Modules initialized: ${counts.enabled}/${counts.total} enabled`);
+
+    // Update agent status with module list
+    agentStatus.modules = moduleManager.getAll();
+
+  } catch (error) {
+    console.error('[APP] Error initializing modules:', error.message);
+  }
+}
 
 /**
  * Create system tray icon and menu
@@ -183,7 +240,7 @@ function createTray() {
   }
 
   tray = new Tray(trayIcon || nativeImage.createEmpty());
-  tray.setToolTip('BytePhase Agent');
+  tray.setToolTip('BytePhase Agent v2.0');
 
   updateTrayMenu();
 }
@@ -196,10 +253,11 @@ function updateTrayMenu() {
   const agentInfo = registered ? authService.getAgentInfo() : {};
   const stats = pollingService.getStats();
   const queueStats = queueService.getStats();
+  const moduleCounts = moduleManager.getCount();
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'BytePhase Agent',
+      label: 'BytePhase Agent v2.0',
       enabled: false,
       icon: nativeImage.createEmpty()
     },
@@ -209,7 +267,7 @@ function updateTrayMenu() {
       enabled: false
     },
     {
-      label: agentStatus.tallyRunning ? '✓ Tally Running' : '✗ Tally Offline',
+      label: `Modules: ${moduleCounts.enabled}/${moduleCounts.total} active`,
       enabled: false
     },
     {
@@ -231,6 +289,10 @@ function updateTrayMenu() {
       click: () => openSettings()
     },
     {
+      label: 'Modules',
+      click: () => openSettings('modules')
+    },
+    {
       label: registered ? 'Stop Polling' : 'Start Polling',
       enabled: registered,
       click: () => togglePolling()
@@ -245,8 +307,14 @@ function updateTrayMenu() {
     { type: 'separator' },
     {
       label: 'Quit',
-      click: () => {
+      click: async () => {
         pollingService.stop();
+
+        // Disable all modules
+        for (const moduleName of moduleManager.getEnabled()) {
+          await moduleManager.disable(moduleName);
+        }
+
         queueService.close();
         app.quit();
       }
@@ -259,17 +327,17 @@ function updateTrayMenu() {
 /**
  * Open settings window
  */
-function openSettings() {
+function openSettings(tab = 'setup') {
   if (settingsWindow) {
     settingsWindow.focus();
     return;
   }
 
   settingsWindow = new BrowserWindow({
-    width: 600,
-    height: 700,
+    width: 700,
+    height: 800,
     title: 'BytePhase Agent - Settings',
-    resizable: false,
+    resizable: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -277,6 +345,11 @@ function openSettings() {
   });
 
   settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings.html'));
+
+  // Send initial tab when ready
+  settingsWindow.webContents.on('did-finish-load', () => {
+    settingsWindow.webContents.send('set-tab', tab);
+  });
 
   settingsWindow.on('closed', () => {
     settingsWindow = null;
@@ -317,7 +390,7 @@ async function handleDeepLink(url) {
       // Open settings window to allow manual entry
       console.error('[APP] Deep link connection failed:', result.error);
       setTimeout(() => {
-        openSettings();
+        openSettings('setup');
       }, 2000); // Delay to allow notification to show
     }
 
@@ -325,7 +398,7 @@ async function handleDeepLink(url) {
     console.error('[APP] Error handling deep link:', error);
     NotificationHelper.showConnectionError(error.message);
     setTimeout(() => {
-      openSettings();
+      openSettings('setup');
     }, 2000);
   }
 }
@@ -355,12 +428,12 @@ async function togglePolling() {
  */
 function startStatusUpdates() {
   setInterval(async () => {
-    // Check Tally status
-    agentStatus.tallyRunning = await tallyService.isRunning();
-
     // Get polling stats
     agentStatus.stats = pollingService.getStats();
     agentStatus.lastPoll = agentStatus.stats.lastPollTime;
+
+    // Get module statuses
+    agentStatus.modules = moduleManager.getAll();
 
     // Update tray menu
     updateTrayMenu();
@@ -370,16 +443,105 @@ function startStatusUpdates() {
 /**
  * IPC Handlers for settings window
  */
+
+// Get agent info
 ipcMain.handle('get-agent-info', () => {
   return {
     registered: authService.isRegistered(),
     agentInfo: authService.getAgentInfo(),
     stats: pollingService.getStats(),
     queueStats: queueService.getStats(),
-    tallyRunning: agentStatus.tallyRunning
+    modules: moduleManager.getAll(),
+    moduleStats: moduleManager.getCount(),
+    jobStats: jobRouter.getStats()
   };
 });
 
+// Quick setup with API key
+ipcMain.handle('connect-with-api-key', async (event, apiKey) => {
+  try {
+    console.log('[APP] Verifying API key...');
+
+    // Verify API key and fetch configuration
+    const result = await authService.verifyAndConfigureWithApiKey(apiKey);
+
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+
+    console.log('[APP] API key verified, configuring agent...');
+
+    // Save credentials
+    await authService.setCredentials({
+      apiKey: apiKey,
+      agentId: result.agentId,
+      shopId: result.shopId,
+      cloudUrl: result.cloudUrl
+    });
+
+    // Configure modules if provided
+    if (result.modules && Object.keys(result.modules).length > 0) {
+      console.log('[APP] Configuring modules from cloud...');
+
+      const configPath = path.join(__dirname, 'config', 'agent.config.json');
+      let config = {};
+
+      if (fs.existsSync(configPath)) {
+        config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      }
+
+      // Merge cloud module configs
+      config.modules = config.modules || {};
+      for (const [moduleName, moduleConfig] of Object.entries(result.modules)) {
+        config.modules[moduleName] = {
+          ...config.modules[moduleName],
+          ...moduleConfig
+        };
+      }
+
+      // Save updated config
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+      // Apply module configuration
+      for (const [moduleName, moduleConfig] of Object.entries(result.modules)) {
+        if (moduleConfig.enabled) {
+          try {
+            await moduleManager.enable(moduleName, moduleConfig.config || {});
+            console.log(`[APP] Module enabled: ${moduleName}`);
+          } catch (error) {
+            console.warn(`[APP] Could not enable module ${moduleName}:`, error.message);
+          }
+        } else {
+          try {
+            await moduleManager.disable(moduleName);
+            console.log(`[APP] Module disabled: ${moduleName}`);
+          } catch (error) {
+            // Module might not be enabled, ignore
+          }
+        }
+      }
+    }
+
+    // Start polling if not already running
+    if (!agentStatus.polling) {
+      await pollingService.start();
+      agentStatus.polling = true;
+    }
+
+    agentStatus.registered = true;
+    agentStatus.modules = moduleManager.getAll();
+    updateTrayMenu();
+
+    console.log('[APP] Agent configured and connected successfully');
+
+    return { success: true };
+  } catch (error) {
+    console.error('[APP] Error connecting with API key:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Save credentials
 ipcMain.handle('save-credentials', async (event, credentials) => {
   try {
     await authService.setCredentials(credentials);
@@ -400,6 +562,7 @@ ipcMain.handle('save-credentials', async (event, credentials) => {
   }
 });
 
+// Clear credentials
 ipcMain.handle('clear-credentials', () => {
   try {
     pollingService.stop();
@@ -414,20 +577,25 @@ ipcMain.handle('clear-credentials', () => {
   }
 });
 
+// Test Tally connection (via module)
 ipcMain.handle('test-tally-connection', async () => {
   try {
-    const running = await tallyService.isRunning();
-    if (!running) {
-      return { success: false, error: 'Tally is not running' };
+    const tallyModule = moduleManager.getModule('tally');
+
+    if (!tallyModule || !tallyModule.enabled) {
+      return { success: false, error: 'Tally module not enabled' };
     }
 
-    const version = await tallyService.getVersion();
-    const company = await tallyService.getCompanyName();
+    const health = await tallyModule.healthCheck();
+
+    if (!health.healthy) {
+      return { success: false, error: health.message };
+    }
 
     return {
       success: true,
-      version,
-      company
+      version: health.details?.version,
+      company: health.details?.company
     };
   } catch (error) {
     return { success: false, error: error.message };
@@ -439,13 +607,69 @@ ipcMain.handle('get-logs', () => {
   return logBuffer;
 });
 
+// Get all modules
+ipcMain.handle('get-modules', () => {
+  return {
+    modules: moduleManager.getAll(),
+    counts: moduleManager.getCount()
+  };
+});
+
+// Enable module
+ipcMain.handle('enable-module', async (event, moduleName, config) => {
+  try {
+    await moduleManager.enable(moduleName, config);
+    agentStatus.modules = moduleManager.getAll();
+    updateTrayMenu();
+
+    return { success: true };
+  } catch (error) {
+    console.error(`[APP] Error enabling module ${moduleName}:`, error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Disable module
+ipcMain.handle('disable-module', async (event, moduleName) => {
+  try {
+    await moduleManager.disable(moduleName);
+    agentStatus.modules = moduleManager.getAll();
+    updateTrayMenu();
+
+    return { success: true };
+  } catch (error) {
+    console.error(`[APP] Error disabling module ${moduleName}:`, error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Get module health
+ipcMain.handle('get-module-health', async () => {
+  try {
+    const health = await moduleManager.healthCheck();
+    return { success: true, health };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // Prevent app from quitting when all windows are closed
 app.on('window-all-closed', (e) => {
   e.preventDefault();
 });
 
 // Handle app quit
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   pollingService.stop();
+
+  // Disable all modules gracefully
+  for (const moduleName of moduleManager.getEnabled()) {
+    try {
+      await moduleManager.disable(moduleName);
+    } catch (error) {
+      console.error(`[APP] Error disabling module ${moduleName}:`, error);
+    }
+  }
+
   queueService.close();
 });

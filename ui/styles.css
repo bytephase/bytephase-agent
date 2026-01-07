@@ -353,3 +353,80 @@ header p {
 .log-message {
   color: #d4d4d4;
 }
+
+/* Setup Mode Toggle */
+.setup-toggle {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 25px;
+  background: #f8f9fa;
+  padding: 5px;
+  border-radius: 8px;
+}
+
+.toggle-btn {
+  flex: 1;
+  padding: 10px 20px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: #666;
+  transition: all 0.3s;
+}
+
+.toggle-btn:hover {
+  color: #667eea;
+}
+
+.toggle-btn.active {
+  background: white;
+  color: #667eea;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Setup Forms */
+.setup-form {
+  display: none;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.setup-form.active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Info Banner */
+.info-banner {
+  padding: 15px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  background: #e7f3ff;
+  border-left: 4px solid #2196f3;
+  color: #1976d2;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.info-banner.warning {
+  background: #fff9e6;
+  border-left-color: #ff9800;
+  color: #f57c00;
+}
+
+.info-banner strong {
+  color: inherit;
+  font-weight: 700;
+}

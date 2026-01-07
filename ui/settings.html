@@ -33,11 +33,45 @@
           <span class="badge badge-warning">Not Registered</span>
         </div>
 
-        <form id="configForm">
+        <!-- Setup Method Toggle -->
+        <div class="setup-toggle">
+          <button class="toggle-btn active" id="quickSetupBtn" onclick="toggleSetupMode('quick')">
+            Quick Setup (Recommended)
+          </button>
+          <button class="toggle-btn" id="advancedSetupBtn" onclick="toggleSetupMode('advanced')">
+            Advanced Setup
+          </button>
+        </div>
+
+        <!-- Quick Setup Form -->
+        <form id="quickConfigForm" class="setup-form active">
+          <div class="info-banner">
+            <strong>Simple Setup:</strong> Just copy your API key from BytePhase CRM and paste it here.
+            Everything else will be configured automatically!
+          </div>
+
+          <div class="form-group">
+            <label for="quickApiKey">API Key</label>
+            <input type="password" id="quickApiKey" placeholder="Paste your API key from BytePhase CRM" required>
+            <small>Get this from: BytePhase CRM → Settings → Agent Setup → Copy API Key</small>
+          </div>
+
+          <div class="button-group">
+            <button type="submit" class="btn btn-primary">Connect Agent</button>
+          </div>
+        </form>
+
+        <!-- Advanced Setup Form -->
+        <form id="advancedConfigForm" class="setup-form">
+          <div class="info-banner warning">
+            <strong>Advanced Mode:</strong> Only use this if you need custom configuration.
+            For normal use, Quick Setup is recommended.
+          </div>
+
           <div class="form-group">
             <label for="cloudUrl">Cloud Service URL</label>
             <input type="text" id="cloudUrl" placeholder="https://your-server.com" required>
-            <small>URL of your Laravel Tally Connect service</small>
+            <small>URL of your BytePhase service</small>
           </div>
 
           <div class="form-group">

@@ -60,10 +60,74 @@ async function loadAgentInfo() {
   }
 }
 
+// Toggle between quick and advanced setup
+function toggleSetupMode(mode) {
+  const quickBtn = document.getElementById('quickSetupBtn');
+  const advancedBtn = document.getElementById('advancedSetupBtn');
+  const quickForm = document.getElementById('quickConfigForm');
+  const advancedForm = document.getElementById('advancedConfigForm');
+
+  if (mode === 'quick') {
+    quickBtn.classList.add('active');
+    advancedBtn.classList.remove('active');
+    quickForm.classList.add('active');
+    advancedForm.classList.remove('active');
+  } else {
+    quickBtn.classList.remove('active');
+    advancedBtn.classList.add('active');
+    quickForm.classList.remove('active');
+    advancedForm.classList.add('active');
+  }
+}
+
 // Setup form handlers
 function setupFormHandlers() {
-  const form = document.getElementById('configForm');
-  form.addEventListener('submit', async (e) => {
+  // Quick Setup Form
+  const quickForm = document.getElementById('quickConfigForm');
+  quickForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const apiKey = document.getElementById('quickApiKey').value.trim();
+
+    if (!apiKey) {
+      showNotification('Please enter your API key', 'error');
+      return;
+    }
+
+    // Show loading state
+    const submitBtn = quickForm.querySelector('button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Connecting...';
+
+    try {
+      // Call the new quick setup handler
+      const result = await ipcRenderer.invoke('connect-with-api-key', apiKey);
+
+      if (result.success) {
+        showNotification('Agent connected successfully! Configuration loaded from cloud.', 'success');
+        document.getElementById('registrationStatus').innerHTML =
+          '<span class="badge badge-success">✓ Registered</span>';
+
+        // Clear the API key field
+        document.getElementById('quickApiKey').value = '';
+
+        // Refresh status
+        await loadAgentInfo();
+      } else {
+        showNotification(`Failed to connect: ${result.error}`, 'error');
+      }
+    } catch (error) {
+      showNotification('Error connecting to cloud: ' + error.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+    }
+  });
+
+  // Advanced Setup Form
+  const advancedForm = document.getElementById('advancedConfigForm');
+  advancedForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const credentials = {
@@ -290,6 +354,7 @@ ipcRenderer.on('log-entry', (event, log) => {
 
 // Make functions globally available
 window.openTab = openTab;
+window.toggleSetupMode = toggleSetupMode;
 window.testTallyConnection = testTallyConnection;
 window.clearConfiguration = clearConfiguration;
 window.refreshStatus = refreshStatus;

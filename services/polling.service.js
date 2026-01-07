@@ -2,7 +2,6 @@ const axios = require('axios');
 const { app } = require('electron');
 const config = require('../config/default.json');
 const authService = require('./auth.service');
-const tallyService = require('./tally.service');
 const queueService = require('./queue.service');
 
 class PollingService {
@@ -14,6 +13,8 @@ class PollingService {
     this.backoffMultiplier = config.backoffMultiplier;
     this.isRunning = false;
     this.timeoutId = null;
+    this.jobRouter = null; // Will be set by main process
+    this.moduleManager = null; // Will be set by main process
     this.stats = {
       totalPolls: 0,
       successfulPolls: 0,
@@ -27,6 +28,22 @@ class PollingService {
   }
 
   /**
+   * Set JobRouter for job execution
+   */
+  setJobRouter(jobRouter) {
+    this.jobRouter = jobRouter;
+    console.log('[POLLING] JobRouter configured');
+  }
+
+  /**
+   * Set ModuleManager for health checks
+   */
+  setModuleManager(moduleManager) {
+    this.moduleManager = moduleManager;
+    console.log('[POLLING] ModuleManager configured');
+  }
+
+  /**
    * Start polling the cloud service
    */
   async start() {
@@ -37,6 +54,11 @@ class PollingService {
 
     if (!authService.isRegistered()) {
       console.error('[POLLING] Agent not registered. Cannot start polling.');
+      return;
+    }
+
+    if (!this.jobRouter) {
+      console.error('[POLLING] JobRouter not configured. Cannot start polling.');
       return;
     }
 
@@ -70,20 +92,28 @@ class PollingService {
       const agentInfo = authService.getAgentInfo();
       const cloudUrl = agentInfo.cloudUrl || config.cloudUrl;
 
-      // Get Tally status
-      const tallyRunning = await tallyService.isRunning();
-      const tallyVersion = tallyRunning ? await tallyService.getVersion() : null;
-      const tallyCompany = tallyRunning ? await tallyService.getCompanyName() : null;
+      // Get module health status
+      let moduleHealth = {};
+      if (this.moduleManager) {
+        try {
+          moduleHealth = await this.moduleManager.healthCheck();
+        } catch (error) {
+          console.error('[POLLING] Error getting module health:', error.message);
+        }
+      }
+
+      // Determine agent status based on module health
+      const allHealthy = Object.values(moduleHealth).every(h => h.healthy);
+      const agentStatus = allHealthy ? 'idle' : 'degraded';
 
       // Prepare poll request
       const pollData = {
         agent_id: agentInfo.agentId,
         shop_id: agentInfo.shopId,
-        status: tallyRunning ? 'idle' : 'tally_offline',
-        tally_version: tallyVersion,
-        tally_company: tallyCompany,
+        status: agentStatus,
         agent_version: app.getVersion(),
-        queue_stats: queueService.getStats()
+        queue_stats: queueService.getStats(),
+        module_health: moduleHealth
       };
 
       // Poll the cloud
@@ -93,7 +123,7 @@ class PollingService {
         {
           headers: {
             ...authService.getAuthHeader(),
-            'User-Agent': `TallyAgent/${app.getVersion()}`,
+            'User-Agent': `BytePhaseAgent/${app.getVersion()}`,
             'Content-Type': 'application/json'
           },
           timeout: config.requestTimeout
@@ -178,8 +208,18 @@ class PollingService {
 
         console.log(`[POLLING] Processing job ${job.id} (${job.type})`);
 
-        // Execute job on Tally
-        const result = await tallyService.executeJob(job);
+        // Route job to appropriate module via JobRouter
+        const routeResult = await this.jobRouter.route(job);
+
+        // Convert to expected format
+        const result = {
+          success: routeResult.success,
+          data: routeResult.result || null,
+          error: routeResult.error || null,
+          errorType: routeResult.success ? null : 'execution_error',
+          module: routeResult.module,
+          duration: routeResult.duration
+        };
 
         // Save locally first
         queueService.saveCompletedJob(job.id, result);
@@ -188,7 +228,7 @@ class PollingService {
         await this.reportResult(job.id, result);
 
         this.stats.jobsProcessed++;
-        console.log(`[POLLING] Job ${job.id} completed successfully`);
+        console.log(`[POLLING] Job ${job.id} completed successfully via ${routeResult.module}`);
 
       } catch (error) {
         this.stats.jobsFailed++;
@@ -217,6 +257,8 @@ class PollingService {
           result: result.data || null,
           error: result.error || null,
           error_type: result.errorType || null,
+          module: result.module || null,
+          duration: result.duration || 0,
           completed_at: new Date().toISOString()
         },
         {
@@ -245,7 +287,9 @@ class PollingService {
     await this.reportResult(jobId, {
       success: false,
       error: error.message,
-      errorType: 'agent_error'
+      errorType: 'agent_error',
+      module: null,
+      duration: 0
     });
   }
 
