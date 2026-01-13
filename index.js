@@ -159,9 +159,10 @@ app.whenReady().then(async () => {
   }
 
   // Auto-open settings for testing (remove in production)
-  setTimeout(() => {
-    openSettings();
-  }, 1000);
+  // Commented out so scan window can open without interference
+  // setTimeout(() => {
+  //   openSettings();
+  // }, 1000);
 
   // Start status update loop
   startStatusUpdates();
@@ -368,6 +369,15 @@ async function handleDeepLink(url) {
     const result = await deepLinkService.processDeepLink(url);
 
     if (result.success) {
+      // Check if this is a directory scan request
+      if (result.type === 'scan') {
+        // Open dedicated scan window
+        console.log('[APP] Opening directory scan window...');
+        openDirectoryScanWindow(result.scanData);
+        return;
+      }
+
+      // Regular connection flow
       // Show success notification
       NotificationHelper.showConnectionSuccess(result.shopId);
 
@@ -401,6 +411,34 @@ async function handleDeepLink(url) {
       openSettings('setup');
     }, 2000);
   }
+}
+
+/**
+ * Open directory scan window
+ */
+function openDirectoryScanWindow(scanData) {
+  const scanWindow = new BrowserWindow({
+    width: 700,
+    height: 800,
+    title: 'Directory Scan - BytePhase Agent',
+    resizable: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  scanWindow.loadFile(path.join(__dirname, 'ui', 'directory-scan.html'));
+
+  // Send job info to the window when ready
+  scanWindow.webContents.on('did-finish-load', () => {
+    console.log('[APP] Scan window loaded, sending data:', scanData);
+    scanWindow.webContents.send('init-scan', scanData);
+  });
+
+  scanWindow.on('closed', () => {
+    console.log('[APP] Scan window closed');
+  });
 }
 
 /**
@@ -650,6 +688,126 @@ ipcMain.handle('get-module-health', async () => {
     return { success: true, health };
   } catch (error) {
     return { success: false, error: error.message };
+  }
+});
+
+// Directory scan - select directory
+ipcMain.handle('select-scan-directory', async () => {
+  const { dialog } = require('electron');
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    title: 'Select Directory to Scan',
+    message: 'Choose the directory containing recovery data',
+    buttonLabel: 'Select'
+  });
+
+  return {
+    canceled: result.canceled,
+    path: result.canceled ? null : result.filePaths[0]
+  };
+});
+
+// Directory scan - start scan
+ipcMain.on('start-directory-scan', async (event, scanData) => {
+  try {
+    console.log('[APP] ===== STARTING DIRECTORY SCAN =====');
+    console.log('[APP] Scan data received:', JSON.stringify(scanData, null, 2));
+
+    const scannerModule = moduleManager.getModule('directory-scanner');
+    if (!scannerModule) {
+      console.error('[APP] Scanner module not loaded!');
+      event.sender.send('scan-error', { message: 'Scanner module not loaded' });
+      return;
+    }
+
+    console.log('[APP] Scanner module loaded, calling scanAndUploadWithProgress...');
+
+    // Execute scan with progress callback
+    const result = await scannerModule.scanAndUploadWithProgress(
+      scanData,
+      // Progress callback
+      (progress) => {
+        console.log('[APP] Progress callback received:', progress);
+        event.sender.send('scan-progress', progress);
+      }
+    );
+
+    console.log('[APP] Scan result:', JSON.stringify(result, null, 2));
+
+    if (result.success) {
+      console.log('[APP] Scan completed successfully, sending scan-complete event');
+      event.sender.send('scan-complete', result);
+    } else {
+      console.error('[APP] Scan failed, sending scan-error event');
+      event.sender.send('scan-error', { message: result.error });
+    }
+
+  } catch (error) {
+    console.error('[APP] Error during scan:', error);
+    event.sender.send('scan-error', { message: error.message });
+  }
+});
+
+// Directory scan - pause scan
+ipcMain.on('pause-scan', (event) => {
+  try {
+    console.log('[APP] Pausing directory scan...');
+    const scannerModule = moduleManager.getModule('directory-scanner');
+    if (!scannerModule) {
+      console.error('[APP] Scanner module not loaded!');
+      event.sender.send('scan-error', { message: 'Scanner module not loaded' });
+      return;
+    }
+
+    const result = scannerModule.pauseScan();
+    console.log('[APP] Pause result:', result);
+    event.sender.send('scan-paused', result);
+
+  } catch (error) {
+    console.error('[APP] Error pausing scan:', error);
+    event.sender.send('scan-error', { message: error.message });
+  }
+});
+
+// Directory scan - resume scan
+ipcMain.on('resume-scan', (event) => {
+  try {
+    console.log('[APP] Resuming directory scan...');
+    const scannerModule = moduleManager.getModule('directory-scanner');
+    if (!scannerModule) {
+      console.error('[APP] Scanner module not loaded!');
+      event.sender.send('scan-error', { message: 'Scanner module not loaded' });
+      return;
+    }
+
+    const result = scannerModule.resumeScan();
+    console.log('[APP] Resume result:', result);
+    event.sender.send('scan-resumed', result);
+
+  } catch (error) {
+    console.error('[APP] Error resuming scan:', error);
+    event.sender.send('scan-error', { message: error.message });
+  }
+});
+
+// Directory scan - cancel scan
+ipcMain.on('cancel-scan', (event) => {
+  try {
+    console.log('[APP] Canceling directory scan...');
+    const scannerModule = moduleManager.getModule('directory-scanner');
+    if (!scannerModule) {
+      console.error('[APP] Scanner module not loaded!');
+      event.sender.send('scan-error', { message: 'Scanner module not loaded' });
+      return;
+    }
+
+    const result = scannerModule.cancelScan({ id: 'cancel' });
+    console.log('[APP] Cancel result:', result);
+    event.sender.send('scan-cancelled', result);
+
+  } catch (error) {
+    console.error('[APP] Error canceling scan:', error);
+    event.sender.send('scan-error', { message: error.message });
   }
 });
 

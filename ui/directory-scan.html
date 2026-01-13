@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>BytePhase Data Validator</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1f2e;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 550px;
+            padding: 32px;
+            min-height: 400px;
+        }
+
+        .screen {
+            display: none;
+        }
+
+        .screen.active {
+            display: block;
+        }
+
+        /* Typography */
+        .title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1f2e;
+            margin-bottom: 24px;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 20px;
+        }
+
+        .label {
+            font-size: 12px;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .value {
+            font-size: 16px;
+            font-weight: 500;
+            color: #1a1f2e;
+            margin-bottom: 16px;
+        }
+
+        /* Info Card */
+        .info-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .info-card .value:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Alert Boxes */
+        .alert {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 14px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background: #ecfdf5;
+            border: 1px solid #a7f3d0;
+        }
+
+        .alert-success .alert-icon {
+            color: #10b981;
+            font-size: 18px;
+        }
+
+        .alert-success .alert-text {
+            color: #059669;
+            font-size: 14px;
+        }
+
+        .alert-warning {
+            background: #fef9e7;
+            border: 1px solid #fcd34d;
+        }
+
+        .alert-warning .alert-icon {
+            color: #d97706;
+            font-size: 18px;
+        }
+
+        .alert-warning .alert-title {
+            color: #d97706;
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .alert-warning .alert-text {
+            color: #b45309;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 14px 24px;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-primary:disabled {
+            background: #93c5fd;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .btn-secondary:hover {
+            background: #d1d5db;
+        }
+
+        .btn-text {
+            background: transparent;
+            color: #374151;
+            padding: 14px 20px;
+        }
+
+        .btn-text:hover {
+            background: #f3f4f6;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .button-group .btn-primary {
+            flex: 1;
+        }
+
+        /* Path Input */
+        .path-input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .path-input {
+            flex: 1;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-family: 'SF Mono', Monaco, monospace;
+            color: #1a1f2e;
+        }
+
+        .path-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .btn-icon {
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-icon:hover {
+            background: #e5e7eb;
+        }
+
+        /* Progress Section */
+        .progress-section {
+            margin-bottom: 24px;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .progress-label {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .progress-percentage {
+            font-size: 14px;
+            font-weight: 600;
+            color: #3b82f6;
+        }
+
+        .progress-bar-wrapper {
+            background: #e5e7eb;
+            border-radius: 4px;
+            height: 8px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            background: #3b82f6;
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        /* Current Folder */
+        .current-folder {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .current-folder .label {
+            margin-bottom: 6px;
+        }
+
+        .current-folder .path {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 14px;
+            color: #1a1f2e;
+            word-break: break-all;
+        }
+
+        /* Stats Row */
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .stat-item .label {
+            margin-bottom: 4px;
+        }
+
+        .stat-item .value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a1f2e;
+            margin-bottom: 0;
+        }
+
+        .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .sync-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+        }
+
+        .sync-text {
+            font-size: 14px;
+            color: #10b981;
+            font-weight: 500;
+        }
+
+        /* Scan Controls */
+        .scan-controls {
+            display: flex;
+            gap: 12px;
+        }
+
+        /* Complete Screen */
+        .complete-icon {
+            width: 72px;
+            height: 72px;
+            background: #ecfdf5;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+        }
+
+        .complete-icon svg {
+            width: 36px;
+            height: 36px;
+            color: #10b981;
+        }
+
+        .complete-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1f2e;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+
+        .complete-subtitle {
+            font-size: 14px;
+            color: #6b7280;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        /* Summary Card */
+        .summary-card {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .summary-title {
+            font-size: 12px;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+        }
+
+        .summary-row:not(:last-child) {
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .summary-label {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .summary-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a1f2e;
+        }
+
+        /* Upload Confirmation */
+        .upload-confirmation {
+            background: #ecfdf5;
+            border-radius: 8px;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .upload-confirmation svg {
+            width: 18px;
+            height: 18px;
+            color: #10b981;
+        }
+
+        .upload-confirmation span {
+            font-size: 14px;
+            color: #059669;
+            font-weight: 500;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 24px;
+            color: #6b7280;
+            font-size: 12px;
+        }
+
+        /* Hidden */
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Screen 1: Job Context -->
+        <div class="screen active" id="screen-job-context">
+            <h1 class="title">Job Context</h1>
+
+            <div class="info-card">
+                <div class="label">Job Number</div>
+                <div class="value" id="jobNumber">Loading...</div>
+
+                <div class="label">Customer Name</div>
+                <div class="value" id="customerName">Loading...</div>
+
+                <div class="label">Device Type</div>
+                <div class="value" id="deviceType">Loading...</div>
+            </div>
+
+            <div class="alert alert-success">
+                <span class="alert-icon">&#10003;</span>
+                <span class="alert-text">Authenticated with BytePhase CRM</span>
+            </div>
+
+            <button class="btn btn-primary" onclick="goToFolderSelection()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+                Select Recovered Data Folder
+            </button>
+        </div>
+
+        <!-- Screen 2: Folder Selection -->
+        <div class="screen" id="screen-folder-selection">
+            <h1 class="title">Folder Selection & Scan</h1>
+
+            <div class="label">Selected Path</div>
+            <div class="path-input-group">
+                <input type="text" class="path-input" id="selectedPath" readonly placeholder="No folder selected">
+                <button class="btn-icon" onclick="selectDirectory()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="alert alert-warning">
+                <span class="alert-icon">&#9888;</span>
+                <div>
+                    <div class="alert-title">Important</div>
+                    <div class="alert-text">Only select the folder containing recovered customer data. Do not include system files or temporary folders.</div>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-text" onclick="goToJobContext()">Back</button>
+                <button class="btn btn-primary" id="startScanBtn" onclick="startScan()" disabled>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Start Scan
+                </button>
+            </div>
+        </div>
+
+        <!-- Screen 3: Scan In Progress -->
+        <div class="screen" id="screen-scanning">
+            <h1 class="title">Scan In Progress</h1>
+
+            <div class="progress-section">
+                <div class="progress-header">
+                    <span class="progress-label">Scanning files...</span>
+                    <span class="progress-percentage" id="progressPercentage">0%</span>
+                </div>
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+            </div>
+
+            <div class="current-folder">
+                <div class="label">Current folder</div>
+                <div class="path" id="currentFolder">Initializing...</div>
+            </div>
+
+            <div class="stats-row">
+                <div class="stat-item">
+                    <div class="label">Files scanned</div>
+                    <div class="value" id="filesScanned">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="label">Background sync</div>
+                    <div class="sync-status">
+                        <span class="sync-dot" id="syncDot"></span>
+                        <span class="sync-text" id="syncStatus">Active</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="scan-controls">
+                <button class="btn btn-secondary" id="pauseBtn" onclick="pauseScan()">Pause</button>
+                <button class="btn btn-secondary" id="resumeBtn" onclick="resumeScan()" disabled>Resume</button>
+            </div>
+        </div>
+
+        <!-- Screen 4: Scan Complete -->
+        <div class="screen" id="screen-complete">
+            <div class="complete-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+            </div>
+
+            <h1 class="complete-title">Scan Complete</h1>
+            <p class="complete-subtitle">Data has been successfully validated and uploaded</p>
+
+            <div class="summary-card">
+                <div class="summary-title">Summary</div>
+                <div class="summary-row">
+                    <span class="summary-label">Total files</span>
+                    <span class="summary-value" id="totalFiles">0</span>
+                </div>
+                <div class="summary-row">
+                    <span class="summary-label">Total folders</span>
+                    <span class="summary-value" id="totalFolders">0</span>
+                </div>
+                <div class="summary-row">
+                    <span class="summary-label">Total size</span>
+                    <span class="summary-value" id="totalSize">0 B</span>
+                </div>
+            </div>
+
+            <div class="upload-confirmation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span>Upload confirmation received</span>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="viewInCRM()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                        <polyline points="15 3 21 3 21 9"></polyline>
+                        <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                    View in CRM
+                </button>
+                <button class="btn btn-secondary" onclick="exitApp()">Exit App</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">BytePhase Data Validator v1.0 • Electron App</div>
+
+    <script>
+        const { ipcRenderer, shell } = require('electron');
+
+        // State
+        let jobInfo = null;
+        let selectedDirectory = null;
+        let scanInProgress = false;
+        let isPaused = false;
+
+        // Screen navigation
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+        }
+
+        function goToJobContext() {
+            showScreen('screen-job-context');
+        }
+
+        function goToFolderSelection() {
+            showScreen('screen-folder-selection');
+        }
+
+        // Initialize with job info from deep link
+        ipcRenderer.on('init-scan', (event, data) => {
+            console.log('[UI] Init scan data received:', data);
+            jobInfo = data;
+
+            document.getElementById('jobNumber').textContent = data.jobNumber || 'N/A';
+            document.getElementById('customerName').textContent = data.customerName || 'N/A';
+            document.getElementById('deviceType').textContent = data.deviceType || 'N/A';
+        });
+
+        // Select directory
+        async function selectDirectory() {
+            const result = await ipcRenderer.invoke('select-scan-directory');
+
+            if (result.canceled) {
+                return;
+            }
+
+            selectedDirectory = result.path;
+            document.getElementById('selectedPath').value = result.path;
+            document.getElementById('startScanBtn').disabled = false;
+        }
+
+        // Start scanning
+        async function startScan() {
+            if (!selectedDirectory || scanInProgress) {
+                return;
+            }
+
+            console.log('[UI] Starting scan...');
+            scanInProgress = true;
+            isPaused = false;
+
+            showScreen('screen-scanning');
+
+            const scanPayload = {
+                jobId: jobInfo.jobId,
+                scanId: jobInfo.scanId,
+                shopId: jobInfo.shopId,
+                userId: jobInfo.userId,
+                cloudUrl: jobInfo.cloudUrl,
+                apiKey: jobInfo.apiKey,
+                directoryPath: selectedDirectory
+            };
+
+            ipcRenderer.send('start-directory-scan', scanPayload);
+        }
+
+        // Pause/Resume scan
+        function pauseScan() {
+            isPaused = true;
+            ipcRenderer.send('pause-scan');
+            document.getElementById('pauseBtn').disabled = true;
+            document.getElementById('resumeBtn').disabled = false;
+            document.getElementById('syncDot').style.background = '#f59e0b';
+            document.getElementById('syncStatus').textContent = 'Paused';
+            document.getElementById('syncStatus').style.color = '#f59e0b';
+        }
+
+        function resumeScan() {
+            isPaused = false;
+            ipcRenderer.send('resume-scan');
+            document.getElementById('pauseBtn').disabled = false;
+            document.getElementById('resumeBtn').disabled = true;
+            document.getElementById('syncDot').style.background = '#10b981';
+            document.getElementById('syncStatus').textContent = 'Active';
+            document.getElementById('syncStatus').style.color = '#10b981';
+        }
+
+        // Listen for progress updates
+        ipcRenderer.on('scan-progress', (event, progress) => {
+            const percentage = Math.min(100, Math.round(progress.percentage || 0));
+
+            document.getElementById('progressBar').style.width = percentage + '%';
+            document.getElementById('progressPercentage').textContent = percentage + '%';
+            document.getElementById('filesScanned').textContent = formatNumber(progress.filesScanned || 0);
+            document.getElementById('currentFolder').textContent = progress.currentPath || 'Processing...';
+        });
+
+        // Listen for completion
+        ipcRenderer.on('scan-complete', (event, result) => {
+            console.log('[UI] Scan complete:', result);
+            scanInProgress = false;
+
+            document.getElementById('totalFiles').textContent = formatNumber(result.statistics?.totalFiles || 0);
+            document.getElementById('totalFolders').textContent = formatNumber(result.statistics?.totalFolders || 0);
+            document.getElementById('totalSize').textContent = formatBytes(result.statistics?.totalSize || 0);
+
+            showScreen('screen-complete');
+        });
+
+        // Listen for errors
+        ipcRenderer.on('scan-error', (event, error) => {
+            console.error('[UI] Scan error:', error);
+            scanInProgress = false;
+            alert('Error: ' + (error.message || 'Scan failed'));
+            goToFolderSelection();
+        });
+
+        // Listen for pause confirmation
+        ipcRenderer.on('scan-paused', (event, result) => {
+            console.log('[UI] Scan paused:', result);
+        });
+
+        // Listen for resume confirmation
+        ipcRenderer.on('scan-resumed', (event, result) => {
+            console.log('[UI] Scan resumed:', result);
+        });
+
+        // Listen for cancel confirmation
+        ipcRenderer.on('scan-cancelled', (event, result) => {
+            console.log('[UI] Scan cancelled:', result);
+            scanInProgress = false;
+            goToFolderSelection();
+        });
+
+        // View in CRM
+        function viewInCRM() {
+            if (jobInfo?.cloudUrl && jobInfo?.jobId) {
+                const crmUrl = `${jobInfo.cloudUrl.replace(':81', '')}/jobs/${jobInfo.jobId}/data-validation`;
+                shell.openExternal(crmUrl);
+            }
+            exitApp();
+        }
+
+        // Exit app
+        function exitApp() {
+            window.close();
+        }
+
+        // Helpers
+        function formatNumber(num) {
+            return num.toLocaleString();
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes || bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>
