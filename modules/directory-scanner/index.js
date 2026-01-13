@@ -107,6 +107,9 @@ class DirectoryScannerModule extends BaseModule {
       case 'scanner.cancel':
         return await this.cancelScan(job);
 
+      case 'scanner.directory.scan-with-upload':
+        return await this.scanAndUpload(job);
+
       default:
         throw new Error(`Unknown scanner job type: ${job.type}`);
     }
@@ -398,6 +401,53 @@ class DirectoryScannerModule extends BaseModule {
   }
 
   /**
+   * Pause ongoing scan
+   */
+  pauseScan() {
+    if (!this.currentScan) {
+      return {
+        success: false,
+        message: 'No scan in progress'
+      };
+    }
+
+    console.log('[SCANNER] Pausing scan...');
+    this.scanner.pauseScan();
+
+    return {
+      success: true,
+      message: 'Scan paused'
+    };
+  }
+
+  /**
+   * Resume paused scan
+   */
+  resumeScan() {
+    if (!this.currentScan) {
+      return {
+        success: false,
+        message: 'No scan in progress'
+      };
+    }
+
+    console.log('[SCANNER] Resuming scan...');
+    this.scanner.resumeScan();
+
+    return {
+      success: true,
+      message: 'Scan resumed'
+    };
+  }
+
+  /**
+   * Check if scan is paused
+   */
+  isScanPaused() {
+    return this.scanner?.isPaused() || false;
+  }
+
+  /**
    * Emit scan progress
    */
   emitProgress(jobId, progress) {
@@ -406,6 +456,372 @@ class DirectoryScannerModule extends BaseModule {
 
     // You can emit events here for real-time updates
     // eventBus.publish('scanner:progress', { jobId, progress });
+  }
+
+  /**
+   * Scan directory and upload results to cloud
+   * Used by deep link flow
+   */
+  async scanAndUpload(job) {
+    const { jobId, shopId, userId, cloudUrl, apiKey, scanId } = job.payload;
+    const axios = require('axios');
+
+    try {
+      console.log('[SCANNER] Starting scan-and-upload flow...');
+
+      // 1. Show directory picker
+      const selectResult = await this.selectDirectory({
+        payload: {
+          title: 'Select Directory to Scan',
+          message: 'Choose the directory containing recovery data to scan'
+        }
+      });
+
+      if (selectResult.canceled) {
+        console.log('[SCANNER] User canceled directory selection');
+        return {
+          success: false,
+          canceled: true,
+          message: 'Directory selection canceled by user'
+        };
+      }
+
+      if (!selectResult.exists || !selectResult.isDirectory) {
+        return {
+          success: false,
+          error: 'Selected path is not a valid directory'
+        };
+      }
+
+      const directoryPath = selectResult.path;
+      console.log(`[SCANNER] User selected: ${directoryPath}`);
+
+      // 2. Perform scan
+      console.log('[SCANNER] Starting directory scan...');
+      const scanResult = await this.scanDirectory({
+        id: job.id || 'scan-upload',
+        payload: {
+          directoryPath,
+          options: {
+            maxDepth: 10,
+            includeHidden: false
+          }
+        }
+      });
+
+      if (!scanResult.success) {
+        return {
+          success: false,
+          error: 'Directory scan failed'
+        };
+      }
+
+      console.log('[SCANNER] Scan completed successfully');
+
+      // 3. Transform to DevExtreme format
+      console.log('[SCANNER] Transforming to DevExtreme format...');
+      const formatted = DevExtremeFormatter.transform(scanResult.tree, {
+        includeRoot: false,
+        includePath: true,
+        includeExtension: true,
+        includeFileType: true
+      });
+
+      const statistics = DevExtremeFormatter.getStatistics(scanResult.tree);
+
+      // 4. Upload to cloud
+      console.log('[SCANNER] Uploading results to cloud...');
+      const uploadUrl = `${cloudUrl}/api/agent/directory-scans/results`;
+
+      const uploadResponse = await axios.post(
+        uploadUrl,
+        {
+          job_id: jobId,
+          scan_id: scanId,
+          directory_path: directoryPath,
+          scan_data: formatted,
+          statistics: statistics,
+          agent_id: job.payload.agentId || null
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          timeout: 60000 // 60 second timeout
+        }
+      );
+
+      console.log('[SCANNER] Upload successful');
+
+      return {
+        success: true,
+        message: 'Directory scan completed and uploaded successfully',
+        scanId: uploadResponse.data.data?.id,
+        statistics: statistics,
+        directoryPath: directoryPath
+      };
+
+    } catch (error) {
+      console.error('[SCANNER] Error in scan-and-upload:', error);
+
+      // Check if it's an axios error
+      if (error.response) {
+        return {
+          success: false,
+          error: `Upload failed: ${error.response.data?.message || error.response.statusText}`,
+          statusCode: error.response.status
+        };
+      }
+
+      return {
+        success: false,
+        error: error.message || 'Scan and upload failed'
+      };
+    }
+  }
+
+  /**
+   * Scan and upload with real-time progress updates
+   * Used by scan UI
+   */
+  async scanAndUploadWithProgress(scanData, progressCallback) {
+    const { jobId, shopId, userId, cloudUrl, apiKey, directoryPath, scanId } = scanData;
+    const axios = require('axios');
+
+    try {
+      console.log('[SCANNER] ===== STARTING SCAN WITH PROGRESS =====');
+      console.log('[SCANNER] Job ID:', jobId);
+      console.log('[SCANNER] Shop ID:', shopId);
+      console.log('[SCANNER] Cloud URL:', cloudUrl);
+      console.log('[SCANNER] Directory:', directoryPath);
+      console.log('[SCANNER] API Key (first 10 chars):', apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING');
+
+      let totalFilesScanned = 0;
+      let totalFoldersScanned = 0;
+      let totalBytesScanned = 0;
+      let lastProgressUpdate = Date.now();
+      const PROGRESS_UPDATE_INTERVAL = 1000; // Send progress every 1 second
+
+      // Create scanner with progress callback
+      const scanOptions = {
+        ...this.config,
+        maxDepth: 10,
+        includeHidden: false,
+        onProgress: (progress) => {
+          totalFilesScanned = progress.filesScanned || 0;
+          totalFoldersScanned = progress.foldersScanned || 0;
+          totalBytesScanned = progress.totalSize || 0;
+
+          // Send progress to UI
+          const now = Date.now();
+          if (now - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL) {
+            const progressData = {
+              filesScanned: totalFilesScanned,
+              foldersScanned: totalFoldersScanned,
+              totalSize: totalBytesScanned,
+              currentPath: progress.currentPath || '',
+              percentage: this.calculatePercentage(progress),
+              directoryPath: directoryPath
+            };
+
+            progressCallback(progressData);
+
+            // Send progress to backend
+            this.sendProgressToBackend(cloudUrl, apiKey, shopId, jobId, scanId, progressData);
+
+            lastProgressUpdate = now;
+          }
+        }
+      };
+
+      // Mark scan as in progress
+      this.currentScan = {
+        jobId: jobId,
+        path: directoryPath,
+        startTime: Date.now()
+      };
+
+      console.log('[SCANNER] Starting directory tree scan...');
+
+      // Build directory tree
+      const tree = await this.scanner.scan(directoryPath, scanOptions);
+
+      console.log('[SCANNER] Directory tree scan completed successfully');
+
+      const stats = this.scanner.getStatistics();
+
+      this.currentScan = null;
+
+      console.log('[SCANNER] Scan statistics:', JSON.stringify(stats, null, 2));
+
+      // Transform to DevExtreme format
+      console.log('[SCANNER] Transforming to DevExtreme format...');
+      const formatted = DevExtremeFormatter.transform(tree, {
+        includeRoot: false,
+        includePath: true,
+        includeExtension: true,
+        includeFileType: true
+      });
+
+      console.log('[SCANNER] Transformation completed. Formatted items count:', formatted.length);
+
+      const statistics = DevExtremeFormatter.getStatistics(tree);
+
+      console.log('[SCANNER] Final statistics:', JSON.stringify(statistics, null, 2));
+
+      // Final progress update (95%)
+      console.log('[SCANNER] Sending final progress update (95%)...');
+      progressCallback({
+        filesScanned: statistics.totalFiles,
+        foldersScanned: statistics.totalFolders,
+        totalSize: statistics.totalSize,
+        currentPath: 'Uploading to cloud...',
+        percentage: 95
+      });
+
+      // Upload to cloud
+      console.log('[SCANNER] ===== UPLOADING RESULTS TO CLOUD =====');
+      const uploadUrl = `${cloudUrl}/api/agent/directory-scans/results`;
+      console.log('[SCANNER] Upload URL:', uploadUrl);
+      console.log('[SCANNER] Upload payload size (scan_data items):', formatted.length);
+      console.log('[SCANNER] Request headers:', {
+        'Authorization': `Bearer ${apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-Tenant': shopId
+      });
+
+      console.log('[SCANNER] Making POST request...');
+
+      const uploadResponse = await axios.post(
+        uploadUrl,
+        {
+          job_id: jobId,
+          scan_id: scanId,
+          directory_path: directoryPath,
+          scan_data: formatted,
+          statistics: statistics,
+          agent_id: scanData.agentId || null
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Tenant': shopId.toString()
+          },
+          timeout: 60000
+        }
+      );
+
+      console.log('[SCANNER] ===== UPLOAD SUCCESSFUL =====');
+      console.log('[SCANNER] Response status:', uploadResponse.status);
+      console.log('[SCANNER] Response data:', JSON.stringify(uploadResponse.data, null, 2));
+
+      return {
+        success: true,
+        message: 'Directory scan completed and uploaded successfully',
+        scanId: uploadResponse.data.data?.id,
+        statistics: statistics,
+        directoryPath: directoryPath
+      };
+
+    } catch (error) {
+      console.error('[SCANNER] ===== ERROR IN SCAN-AND-UPLOAD =====');
+      console.error('[SCANNER] Error type:', error.constructor.name);
+      console.error('[SCANNER] Error message:', error.message);
+
+      if (error.response) {
+        console.error('[SCANNER] HTTP Response Error:');
+        console.error('[SCANNER] - Status:', error.response.status);
+        console.error('[SCANNER] - Status Text:', error.response.statusText);
+        console.error('[SCANNER] - Headers:', JSON.stringify(error.response.headers, null, 2));
+        console.error('[SCANNER] - Data:', JSON.stringify(error.response.data, null, 2));
+      } else if (error.request) {
+        console.error('[SCANNER] No response received from server');
+        console.error('[SCANNER] Request details:', error.request);
+      } else {
+        console.error('[SCANNER] Error setting up request:', error.message);
+      }
+
+      console.error('[SCANNER] Full error stack:', error.stack);
+
+      this.currentScan = null;
+
+      if (error.response) {
+        return {
+          success: false,
+          error: `Upload failed (${error.response.status}): ${error.response.data?.message || error.response.statusText}`
+        };
+      }
+
+      return {
+        success: false,
+        error: error.message || 'Scan failed'
+      };
+    }
+  }
+
+  /**
+   * Calculate estimated scan percentage
+   */
+  calculatePercentage(progress) {
+    // Simple heuristic: assume scanning takes 90% of time, upload 10%
+    // This is a rough estimate and can be improved
+    if (!this.currentScan) return 0;
+
+    const elapsed = Date.now() - this.currentScan.startTime;
+    const filesPerSecond = progress.filesScanned / (elapsed / 1000);
+
+    // Estimate based on typical scan speeds (very rough)
+    const estimatedProgress = Math.min(90, (progress.filesScanned / 1000) * 10);
+
+    return Math.round(estimatedProgress);
+  }
+
+  /**
+   * Send progress update to backend
+   */
+  async sendProgressToBackend(cloudUrl, apiKey, shopId, jobId, scanId, progress) {
+    const axios = require('axios');
+
+    try {
+      const progressUrl = `${cloudUrl}/api/agent/directory-scans/${jobId}/progress`;
+      console.log('[SCANNER] Sending progress to:', progressUrl, '- Files:', progress.filesScanned, 'Percentage:', progress.percentage);
+
+      await axios.post(
+        progressUrl,
+        {
+          scan_id: scanId,
+          status: 'scanning',
+          files_scanned: progress.filesScanned,
+          folders_scanned: progress.foldersScanned,
+          total_size: progress.totalSize,
+          current_path: progress.currentPath,
+          percentage: progress.percentage,
+          directory_path: progress.directoryPath || ''
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'X-Tenant': shopId.toString()
+          },
+          timeout: 5000
+        }
+      );
+
+      console.log('[SCANNER] Progress update sent successfully');
+    } catch (error) {
+      // Log the error but don't fail the scan
+      console.warn('[SCANNER] Failed to send progress update:', error.message);
+      if (error.response) {
+        console.warn('[SCANNER] Progress error status:', error.response.status);
+        console.warn('[SCANNER] Progress error data:', error.response.data);
+      }
+    }
   }
 
   /**
@@ -466,6 +882,7 @@ class DirectoryScannerModule extends BaseModule {
     return [
       'scanner.directory.select',
       'scanner.directory.scan',
+      'scanner.directory.scan-with-upload',
       'scanner.export.html',
       'scanner.export.json',
       'scanner.export.devextreme',
