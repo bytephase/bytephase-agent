@@ -13,6 +13,8 @@ class ScannerService {
   constructor(config) {
     this.config = config;
     this.canceled = false;
+    this.paused = false;
+    this.pauseResolve = null;
     this.stats = {
       totalFiles: 0,
       totalFolders: 0,
@@ -35,6 +37,11 @@ class ScannerService {
     // Check if scan was canceled
     if (this.canceled) {
       throw new Error('Scan canceled');
+    }
+
+    // Check if scan is paused and wait
+    if (this.paused) {
+      await this.waitForResume();
     }
 
     const maxDepth = options.maxDepth || this.config.maxDepth;
@@ -248,6 +255,46 @@ class ScannerService {
   cancelScan() {
     console.log('[SCANNER] Canceling scan...');
     this.canceled = true;
+    // If paused, resume first to allow cancel to propagate
+    if (this.paused) {
+      this.resumeScan();
+    }
+  }
+
+  /**
+   * Pause ongoing scan
+   */
+  pauseScan() {
+    console.log('[SCANNER] Pausing scan...');
+    this.paused = true;
+  }
+
+  /**
+   * Resume paused scan
+   */
+  resumeScan() {
+    console.log('[SCANNER] Resuming scan...');
+    this.paused = false;
+    if (this.pauseResolve) {
+      this.pauseResolve();
+      this.pauseResolve = null;
+    }
+  }
+
+  /**
+   * Wait for scan to be resumed
+   */
+  waitForResume() {
+    return new Promise((resolve) => {
+      this.pauseResolve = resolve;
+    });
+  }
+
+  /**
+   * Check if scan is paused
+   */
+  isPaused() {
+    return this.paused;
   }
 
   /**
@@ -275,6 +322,8 @@ class ScannerService {
       skipped: 0
     };
     this.canceled = false;
+    this.paused = false;
+    this.pauseResolve = null;
   }
 
   /**
