@@ -115,6 +115,7 @@ class DeepLinkService {
       // 6. Return success with agent info
       return {
         success: true,
+        type: 'connect',
         agentId: result.agentId,
         shopId: result.shopId,
         modules: result.modules,
@@ -129,6 +130,58 @@ class DeepLinkService {
       };
     } finally {
       this.isProcessing = false;
+    }
+  }
+
+  /**
+   * Handle directory scan request from app
+   * @param {string} token - The scan token from the URL
+   * @returns {Object} { success: true/false, error: '...', type: 'scan', scanData: {...} }
+   */
+  async handleScanDirectory(token) {
+    try {
+      console.log('[DEEPLINK] Handling scan-directory request...');
+
+      // 1. Validate token
+      const validation = tokenService.validateToken(token);
+      if (!validation.success) {
+        console.error('[DEEPLINK] Token validation failed:', validation.error);
+        return { success: false, error: validation.error };
+      }
+
+      const payload = validation.payload;
+      const metadata = payload.metadata || {};
+
+      console.log('[DEEPLINK] Token validated for scan:', {
+        job_id: metadata.job_id,
+        shop_id: metadata.shop_id
+      });
+
+      // 2. Mark token as used (prevent replay attacks)
+      tokenService.markTokenAsUsed(payload.nonce, payload.timestamp);
+
+      // 3. Return scan data (window will be created by main process)
+      return {
+        success: true,
+        type: 'scan',
+        scanData: {
+          jobId: metadata.job_id,
+          shopId: metadata.shop_id,
+          userId: metadata.user_id,
+          cloudUrl: metadata.cloud_url,
+          apiKey: payload.api_key,
+          jobNumber: metadata.job_number || 'N/A',
+          customerName: metadata.customer_name || 'N/A',
+          shopName: metadata.shop_name || 'N/A'
+        }
+      };
+
+    } catch (error) {
+      console.error('[DEEPLINK] Error handling scan-directory:', error);
+      return {
+        success: false,
+        error: error.message || 'An unexpected error occurred'
+      };
     }
   }
 
@@ -155,6 +208,13 @@ class DeepLinkService {
           return { success: false, error: 'Missing token parameter in deep link' };
         }
         return await this.handleConnect(parsed.params.token);
+
+      case 'scan-directory':
+        // Validate token parameter exists
+        if (!parsed.params.token) {
+          return { success: false, error: 'Missing token parameter in deep link' };
+        }
+        return await this.handleScanDirectory(parsed.params.token);
 
       case 'disconnect':
         // Future: Handle disconnect action
