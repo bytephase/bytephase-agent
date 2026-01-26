@@ -622,6 +622,27 @@
             document.getElementById('jobNumber').textContent = data.jobNumber || 'N/A';
             document.getElementById('customerName').textContent = data.customerName || 'N/A';
             document.getElementById('deviceType').textContent = data.deviceType || 'N/A';
+
+            // Notify backend that agent is connected (before user selects folder)
+            console.log('[UI] Sending notify-agent-connected with:', {
+                jobId: data.jobId,
+                scanId: data.scanId,
+                cloudUrl: data.cloudUrl,
+                apiKey: data.apiKey ? 'present' : 'missing'
+            });
+
+            try {
+                ipcRenderer.send('notify-agent-connected', {
+                    jobId: data.jobId,
+                    scanId: data.scanId,
+                    cloudUrl: data.cloudUrl,
+                    apiKey: data.apiKey
+                });
+                console.log('[UI] IPC send completed');
+            } catch (err) {
+                console.error('[UI] IPC send error:', err);
+                alert('IPC Error: ' + err.message);
+            }
         });
 
         // Select directory
@@ -732,9 +753,17 @@
 
         // View in CRM
         function viewInCRM() {
-            if (jobInfo?.cloudUrl && jobInfo?.jobId) {
-                const crmUrl = `${jobInfo.cloudUrl.replace(':81', '')}/jobs/${jobInfo.jobId}/data-validation`;
-                shell.openExternal(crmUrl);
+            if (jobInfo?.jobId) {
+                // Use frontendUrl if available, fallback to cloudUrl transformation
+                let baseUrl = jobInfo.frontendUrl;
+                if (!baseUrl && jobInfo.cloudUrl) {
+                    // Legacy fallback: try to transform cloudUrl to frontend URL
+                    baseUrl = jobInfo.cloudUrl.replace(':81', '');
+                }
+                if (baseUrl) {
+                    const crmUrl = `${baseUrl}/jobs/${jobInfo.jobId}/data-validation`;
+                    shell.openExternal(crmUrl);
+                }
             }
             exitApp();
         }
