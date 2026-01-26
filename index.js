@@ -1,6 +1,11 @@
 const { app, Tray, Menu, nativeImage, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+
+// Health check server port - frontend uses this to detect if agent is running
+const HEALTH_CHECK_PORT = 19876;
+let healthCheckServer = null;
 
 // Core module system
 const moduleManager = require('./core/module-manager');
@@ -15,6 +20,8 @@ const deepLinkService = require('./services/deeplink.service');
 
 // Utilities
 const NotificationHelper = require('./utils/notification.helper');
+const ProtocolRegistrationHelper = require('./utils/protocol-registration.helper');
+const InstanceLockHelper = require('./utils/instance-lock.helper');
 
 let tray = null;
 let settingsWindow = null;
@@ -87,12 +94,28 @@ if (process.defaultApp) {
 /**
  * Single instance lock - ensures only one instance of the app runs
  */
+// Check for stale locks from crashed instances
+const staleLockCleaned = InstanceLockHelper.checkAndCleanStaleLock();
+if (staleLockCleaned) {
+  console.log('[APP] Cleaned up stale lock from previous crashed instance');
+}
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
-  console.log('[APP] Another instance is already running. Sending deep link and quitting...');
+  console.log('[APP] Another instance is already running.');
+
+  // Save deep link for the running instance to pick up
+  const deeplinkUrl = process.argv.find(arg => arg.startsWith('bytephase://'));
+  if (deeplinkUrl) {
+    InstanceLockHelper.saveDeepLinkForLater(deeplinkUrl);
+    console.log('[APP] Saved deep link for running instance to process');
+  }
+
   app.quit();
 } else {
+  // Start heartbeat to indicate we're alive (for stale lock detection)
+  InstanceLockHelper.startHeartbeat();
   // Handle deep links from second instance (warm start)
   app.on('second-instance', async (event, commandLine, workingDirectory) => {
     console.log('[APP] Second instance detected, processing deep link...');
@@ -125,6 +148,14 @@ app.whenReady().then(async () => {
   console.log('[APP] BytePhase Agent v2.0 - Modular Architecture');
   console.log('[APP] Application started');
 
+  // Ensure protocol handler is registered (especially important for Linux)
+  const protocolResult = await ProtocolRegistrationHelper.ensureProtocolRegistered();
+  if (protocolResult.success) {
+    console.log('[APP] Protocol registration:', protocolResult.message);
+  } else {
+    console.warn('[APP] Protocol registration warning:', protocolResult.message);
+  }
+
   // Initialize module system
   await initializeModules();
 
@@ -142,7 +173,17 @@ app.whenReady().then(async () => {
   agentStatus.registered = authService.isRegistered();
 
   // Handle deep link on cold start (Windows/Linux)
-  const deeplinkUrl = process.argv.find(arg => arg.startsWith('bytephase://'));
+  let deeplinkUrl = process.argv.find(arg => arg.startsWith('bytephase://'));
+
+  // Also check for pending deep link saved by a previous instance that couldn't acquire lock
+  if (!deeplinkUrl) {
+    const pendingDeepLink = InstanceLockHelper.getPendingDeepLink();
+    if (pendingDeepLink) {
+      deeplinkUrl = pendingDeepLink;
+      console.log('[APP] Found pending deep link from previous instance');
+    }
+  }
+
   if (deeplinkUrl) {
     console.log('[APP] Cold start with deep link:', deeplinkUrl);
     await handleDeepLink(deeplinkUrl);
@@ -158,14 +199,21 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Auto-open settings for testing (remove in production)
-  // Commented out so scan window can open without interference
-  // setTimeout(() => {
-  //   openSettings();
-  // }, 1000);
+  // On Windows, show settings window on first launch so user knows app is running
+  // (since system tray icons can be hidden)
+  const isFirstLaunch = !agentStatus.registered;
+  if (process.platform === 'win32' && isFirstLaunch) {
+    console.log('[APP] Windows first launch - opening settings window');
+    setTimeout(() => {
+      openSettings();
+    }, 1000);
+  }
 
   // Start status update loop
   startStatusUpdates();
+
+  // Start health check server for frontend detection
+  startHealthCheckServer();
 
   // Cleanup old queue items every hour
   setInterval(() => {
@@ -226,24 +274,47 @@ async function initializeModules() {
  * Create system tray icon and menu
  */
 function createTray() {
-  const iconPath = path.join(__dirname, 'assets', 'icon.png');
+  // Use platform-specific icon
+  const isWindows = process.platform === 'win32';
+  const iconName = isWindows ? 'icon.ico' : 'icon.png';
+  const iconPath = path.join(__dirname, 'assets', iconName);
+
+  console.log('[TRAY] Loading icon from:', iconPath);
+
   let trayIcon;
 
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
     if (trayIcon.isEmpty()) {
-      console.warn('[TRAY] Icon not found, using default');
-      trayIcon = null;
+      console.warn('[TRAY] Icon not found or empty, using fallback');
+      // Try fallback to png
+      const fallbackPath = path.join(__dirname, 'assets', 'icon.png');
+      trayIcon = nativeImage.createFromPath(fallbackPath);
     }
   } catch (error) {
     console.warn('[TRAY] Error loading icon:', error.message);
     trayIcon = null;
   }
 
-  tray = new Tray(trayIcon || nativeImage.createEmpty());
+  // On Windows, we need a valid icon - create a simple one if needed
+  if (!trayIcon || trayIcon.isEmpty()) {
+    console.warn('[TRAY] Creating empty tray icon');
+    trayIcon = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(trayIcon);
   tray.setToolTip('BytePhase Agent v2.0');
 
+  // On Windows, double-click tray icon to open settings
+  if (isWindows) {
+    tray.on('double-click', () => {
+      openSettings();
+    });
+  }
+
   updateTrayMenu();
+
+  console.log('[TRAY] System tray created successfully');
 }
 
 /**
@@ -459,6 +530,56 @@ async function togglePolling() {
     console.log('[APP] Polling started');
   }
   updateTrayMenu();
+}
+
+/**
+ * Start health check HTTP server
+ * This allows the web frontend to detect if the agent is installed and running
+ */
+function startHealthCheckServer() {
+  try {
+    healthCheckServer = http.createServer((req, res) => {
+      // Enable CORS for frontend access
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (req.url === '/health' || req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'ok',
+          agent: 'BytePhase Agent',
+          version: '2.0.0',
+          registered: agentStatus.registered,
+          polling: agentStatus.polling,
+          timestamp: new Date().toISOString()
+        }));
+      } else {
+        res.writeHead(404);
+        res.end('Not Found');
+      }
+    });
+
+    healthCheckServer.listen(HEALTH_CHECK_PORT, '127.0.0.1', () => {
+      console.log(`[APP] Health check server running on http://127.0.0.1:${HEALTH_CHECK_PORT}`);
+    });
+
+    healthCheckServer.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`[APP] Health check port ${HEALTH_CHECK_PORT} already in use (another instance may be running)`);
+      } else {
+        console.error('[APP] Health check server error:', err.message);
+      }
+    });
+  } catch (error) {
+    console.error('[APP] Failed to start health check server:', error.message);
+  }
 }
 
 /**
@@ -707,6 +828,51 @@ ipcMain.handle('select-scan-directory', async () => {
   };
 });
 
+// Directory scan - notify backend that agent is connected (before scanning starts)
+ipcMain.on('notify-agent-connected', async (event, data) => {
+  console.log('[APP] ===== NOTIFY AGENT CONNECTED =====');
+  console.log('[APP] Data received:', JSON.stringify(data, null, 2));
+
+  if (!data.cloudUrl || !data.jobId) {
+    console.error('[APP] Missing required data: cloudUrl or jobId');
+    return;
+  }
+
+  try {
+    const axios = require('axios');
+    const url = `${data.cloudUrl}/api/directory-scans/${data.jobId}/progress`;
+    console.log('[APP] Sending notification to:', url);
+
+    const response = await axios.post(
+      url,
+      {
+        scan_id: data.scanId || null,
+        status: 'agent_connected',
+        files_scanned: 0,
+        folders_scanned: 0,
+        total_size: 0,
+        current_path: '',
+        percentage: 0
+      },
+      {
+        headers: {
+          'X-Agent-API-Key': data.apiKey,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+
+    console.log('[APP] Agent connected notification SUCCESS:', response.status);
+  } catch (error) {
+    console.error('[APP] Agent connected notification FAILED:', error.message);
+    if (error.response) {
+      console.error('[APP] Response status:', error.response.status);
+      console.error('[APP] Response data:', error.response.data);
+    }
+  }
+});
+
 // Directory scan - start scan
 ipcMain.on('start-directory-scan', async (event, scanData) => {
   try {
@@ -819,6 +985,15 @@ app.on('window-all-closed', (e) => {
 // Handle app quit
 app.on('before-quit', async () => {
   pollingService.stop();
+
+  // Stop health check server
+  if (healthCheckServer) {
+    healthCheckServer.close();
+    console.log('[APP] Health check server stopped');
+  }
+
+  // Stop heartbeat and cleanup lock files
+  InstanceLockHelper.stopHeartbeat();
 
   // Disable all modules gracefully
   for (const moduleName of moduleManager.getEnabled()) {
