@@ -681,49 +681,33 @@ class DirectoryScannerModule extends BaseModule {
         percentage: 95
       });
 
-      // Upload to cloud
+      // Upload to cloud using chunked upload for large datasets
       console.log('[SCANNER] ===== UPLOADING RESULTS TO CLOUD =====');
-      const uploadUrl = `${cloudUrl}/api/agent/directory-scans/results`;
-      console.log('[SCANNER] Upload URL:', uploadUrl);
-      console.log('[SCANNER] Upload payload size (scan_data items):', formatted.length);
-      console.log('[SCANNER] Request headers:', {
-        'Authorization': `Bearer ${apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-Tenant': shopId
+      console.log('[SCANNER] Total items to upload:', formatted.length);
+
+      const uploadResult = await this.uploadInChunks({
+        cloudUrl,
+        apiKey,
+        shopId,
+        jobId,
+        scanId,
+        directoryPath,
+        formatted,
+        statistics,
+        agentId: scanData.agentId,
+        progressCallback
       });
 
-      console.log('[SCANNER] Making POST request...');
-
-      const uploadResponse = await axios.post(
-        uploadUrl,
-        {
-          job_id: jobId,
-          scan_id: scanId,
-          directory_path: directoryPath,
-          scan_data: formatted,
-          statistics: statistics,
-          agent_id: scanData.agentId || null
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Tenant': shopId.toString()
-          },
-          timeout: 60000
-        }
-      );
+      if (!uploadResult.success) {
+        return uploadResult;
+      }
 
       console.log('[SCANNER] ===== UPLOAD SUCCESSFUL =====');
-      console.log('[SCANNER] Response status:', uploadResponse.status);
-      console.log('[SCANNER] Response data:', JSON.stringify(uploadResponse.data, null, 2));
 
       return {
         success: true,
         message: 'Directory scan completed and uploaded successfully',
-        scanId: uploadResponse.data.data?.id,
+        scanId: uploadResult.scanId,
         statistics: statistics,
         directoryPath: directoryPath
       };
@@ -760,6 +744,204 @@ class DirectoryScannerModule extends BaseModule {
       return {
         success: false,
         error: error.message || 'Scan failed'
+      };
+    }
+  }
+
+  /**
+   * Upload scan results in chunks to handle large datasets
+   * Splits data into manageable chunks to avoid 413 errors
+   */
+  async uploadInChunks(params) {
+    const {
+      cloudUrl,
+      apiKey,
+      shopId,
+      jobId,
+      scanId,
+      directoryPath,
+      formatted,
+      statistics,
+      agentId,
+      progressCallback
+    } = params;
+
+    const axios = require('axios');
+
+    // Chunk size: 5000 items per chunk (adjust based on average item size)
+    const CHUNK_SIZE = 5000;
+    const totalItems = formatted.length;
+    const totalChunks = Math.ceil(totalItems / CHUNK_SIZE);
+
+    console.log(`[SCANNER] Uploading in ${totalChunks} chunk(s), ${CHUNK_SIZE} items per chunk`);
+
+    // If small enough, upload in single request (backward compatible)
+    if (totalChunks === 1) {
+      return await this.uploadSingleChunk({
+        cloudUrl, apiKey, shopId, jobId, scanId, directoryPath,
+        scanData: formatted, statistics, agentId, isChunked: false
+      });
+    }
+
+    // Upload chunks
+    let uploadedScanId = null;
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const start = chunkIndex * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, totalItems);
+      const chunk = formatted.slice(start, end);
+
+      const isFirstChunk = chunkIndex === 0;
+      const isLastChunk = chunkIndex === totalChunks - 1;
+
+      console.log(`[SCANNER] Uploading chunk ${chunkIndex + 1}/${totalChunks} (items ${start + 1}-${end})`);
+
+      // Update progress
+      const uploadProgress = 95 + ((chunkIndex + 1) / totalChunks) * 4; // 95-99%
+      progressCallback({
+        filesScanned: statistics.totalFiles,
+        foldersScanned: statistics.totalFolders,
+        totalSize: statistics.totalSize,
+        currentPath: `Uploading chunk ${chunkIndex + 1} of ${totalChunks}...`,
+        percentage: Math.round(uploadProgress)
+      });
+
+      try {
+        const uploadUrl = `${cloudUrl}/api/agent/directory-scans/results`;
+
+        const response = await axios.post(
+          uploadUrl,
+          {
+            job_id: jobId,
+            scan_id: scanId,
+            directory_path: directoryPath,
+            scan_data: chunk,
+            statistics: isLastChunk ? statistics : null, // Only send stats with last chunk
+            agent_id: agentId || null,
+            // Chunking metadata
+            is_chunked: true,
+            chunk_index: chunkIndex,
+            total_chunks: totalChunks,
+            is_first_chunk: isFirstChunk,
+            is_last_chunk: isLastChunk,
+            total_items: totalItems
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Tenant': shopId.toString()
+            },
+            timeout: 120000, // 2 minute timeout per chunk
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity
+          }
+        );
+
+        console.log(`[SCANNER] Chunk ${chunkIndex + 1} uploaded successfully`);
+
+        // Get scan ID from first chunk response
+        if (isFirstChunk && response.data?.data?.id) {
+          uploadedScanId = response.data.data.id;
+        }
+
+      } catch (error) {
+        console.error(`[SCANNER] Failed to upload chunk ${chunkIndex + 1}:`, error.message);
+
+        if (error.response) {
+          console.error('[SCANNER] Error status:', error.response.status);
+          console.error('[SCANNER] Error data:', error.response.data);
+
+          return {
+            success: false,
+            error: `Upload failed at chunk ${chunkIndex + 1}/${totalChunks} (${error.response.status}): ${error.response.data?.message || error.response.statusText}`
+          };
+        }
+
+        return {
+          success: false,
+          error: `Upload failed at chunk ${chunkIndex + 1}/${totalChunks}: ${error.message}`
+        };
+      }
+
+      // Small delay between chunks to avoid overwhelming the server
+      if (!isLastChunk) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    return {
+      success: true,
+      scanId: uploadedScanId
+    };
+  }
+
+  /**
+   * Upload a single chunk or small dataset
+   */
+  async uploadSingleChunk(params) {
+    const {
+      cloudUrl, apiKey, shopId, jobId, scanId, directoryPath,
+      scanData, statistics, agentId, isChunked
+    } = params;
+
+    const axios = require('axios');
+    const uploadUrl = `${cloudUrl}/api/agent/directory-scans/results`;
+
+    console.log('[SCANNER] Upload URL:', uploadUrl);
+    console.log('[SCANNER] Upload payload size:', scanData.length, 'items');
+
+    try {
+      const response = await axios.post(
+        uploadUrl,
+        {
+          job_id: jobId,
+          scan_id: scanId,
+          directory_path: directoryPath,
+          scan_data: scanData,
+          statistics: statistics,
+          agent_id: agentId || null,
+          is_chunked: isChunked,
+          chunk_index: 0,
+          total_chunks: 1,
+          is_first_chunk: true,
+          is_last_chunk: true,
+          total_items: scanData.length
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Tenant': shopId.toString()
+          },
+          timeout: 120000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity
+        }
+      );
+
+      console.log('[SCANNER] Upload successful, status:', response.status);
+
+      return {
+        success: true,
+        scanId: response.data?.data?.id
+      };
+
+    } catch (error) {
+      console.error('[SCANNER] Upload failed:', error.message);
+
+      if (error.response) {
+        return {
+          success: false,
+          error: `Upload failed (${error.response.status}): ${error.response.data?.message || error.response.statusText}`
+        };
+      }
+
+      return {
+        success: false,
+        error: `Upload failed: ${error.message}`
       };
     }
   }

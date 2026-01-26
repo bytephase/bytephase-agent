@@ -18,8 +18,8 @@ class TokenService {
     // TODO: Change this in production and match with backend .env AGENT_TOKEN_SECRET
     this.SHARED_SECRET = 'bytephase-token-secret-256bit-change-in-prod';
 
-    // Token expiry: 5 minutes
-    this.TOKEN_EXPIRY_MS = 5 * 60 * 1000;
+    // Token expiry: 10 minutes (increased from 5 to handle slow systems and browser delays)
+    this.TOKEN_EXPIRY_MS = 10 * 60 * 1000;
   }
 
   /**
