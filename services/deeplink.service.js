@@ -166,9 +166,11 @@ class DeepLinkService {
         type: 'scan',
         scanData: {
           jobId: metadata.job_id,
+          scanId: metadata.scan_id,
           shopId: metadata.shop_id,
           userId: metadata.user_id,
           cloudUrl: metadata.cloud_url,
+          frontendUrl: metadata.frontend_url,
           apiKey: payload.api_key,
           jobNumber: metadata.job_number || 'N/A',
           customerName: metadata.customer_name || 'N/A',
