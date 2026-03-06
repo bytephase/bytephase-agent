@@ -25,6 +25,7 @@ const InstanceLockHelper = require('./utils/instance-lock.helper');
 
 let tray = null;
 let settingsWindow = null;
+let trayPopupWindow = null;
 let agentStatus = {
   registered: false,
   polling: false,
@@ -315,6 +316,11 @@ function createTray() {
   tray = new Tray(trayIcon);
   tray.setToolTip('BytePhase Agent v2.0');
 
+  // Single click opens custom popup on all platforms
+  tray.on('click', (event, bounds) => {
+    toggleTrayPopup(bounds);
+  });
+
   // On Windows, double-click tray icon to open settings
   if (process.platform === 'win32') {
     tray.on('double-click', () => {
@@ -322,9 +328,96 @@ function createTray() {
     });
   }
 
+  // Right-click shows minimal native menu (quit only)
+  const rightClickMenu = Menu.buildFromTemplate([
+    { label: 'Open Settings', click: () => openSettings() },
+    { type: 'separator' },
+    {
+      label: 'Quit', click: async () => {
+        pollingService.stop();
+        for (const moduleName of moduleManager.getEnabled()) {
+          await moduleManager.disable(moduleName);
+        }
+        queueService.close();
+        app.quit();
+      }
+    }
+  ]);
+  tray.on('right-click', () => {
+    tray.popUpContextMenu(rightClickMenu);
+  });
+
   updateTrayMenu();
 
   console.log('[TRAY] System tray created successfully');
+}
+
+/**
+ * Toggle tray popup window
+ */
+function toggleTrayPopup(bounds) {
+  if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+    trayPopupWindow.close();
+    trayPopupWindow = null;
+    return;
+  }
+  createTrayPopup(bounds);
+}
+
+/**
+ * Create custom tray popup window positioned near the tray icon
+ */
+function createTrayPopup(bounds) {
+  const popupWidth = 340;
+  const popupHeight = 440;
+
+  let x, y;
+  if (process.platform === 'darwin') {
+    // macOS: center below the tray icon
+    x = Math.round(bounds.x + bounds.width / 2 - popupWidth / 2);
+    y = Math.round(bounds.y + bounds.height + 4);
+  } else {
+    // Windows/Linux: position above the tray icon (taskbar at bottom)
+    x = Math.round(bounds.x + bounds.width / 2 - popupWidth / 2);
+    y = Math.round(bounds.y - popupHeight - 4);
+  }
+
+  trayPopupWindow = new BrowserWindow({
+    width: popupWidth,
+    height: popupHeight,
+    x: x,
+    y: y,
+    frame: false,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    transparent: true,
+    hasShadow: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  trayPopupWindow.loadFile(path.join(__dirname, 'ui', 'tray-popup.html'));
+
+  trayPopupWindow.once('ready-to-show', () => {
+    trayPopupWindow.show();
+  });
+
+  // Close on blur (clicking outside the popup)
+  trayPopupWindow.on('blur', () => {
+    if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+      trayPopupWindow.close();
+      trayPopupWindow = null;
+    }
+  });
+
+  trayPopupWindow.on('closed', () => {
+    trayPopupWindow = null;
+  });
 }
 
 /**
@@ -608,6 +701,75 @@ function startStatusUpdates() {
     updateTrayMenu();
   }, 5000); // Update every 5 seconds
 }
+
+/**
+ * IPC Handlers for tray popup
+ */
+
+// Get tray popup data (aggregates multiple sources)
+ipcMain.handle('get-tray-popup-data', async () => {
+  const registered = authService.isRegistered();
+  const agentInfo = registered ? authService.getAgentInfo() : {};
+  const stats = pollingService.getStats();
+  const moduleCounts = moduleManager.getCount();
+
+  // Tally connection status
+  let tallyStatus = { connected: false, version: null, company: null };
+  const tallyModule = moduleManager.getModule('tally');
+  if (tallyModule && tallyModule.enabled) {
+    try {
+      const health = await tallyModule.healthCheck();
+      tallyStatus = {
+        connected: health.healthy,
+        version: health.details ? health.details.version : null,
+        company: health.details ? health.details.company : null
+      };
+    } catch (e) { /* leave defaults */ }
+  }
+
+  // Directory Scanner status
+  const scannerModule = moduleManager.getModule('directory-scanner');
+  const scannerActive = scannerModule && scannerModule.enabled;
+
+  // Tally sync stats (from module if available)
+  let tallySyncStats = { lastSyncTime: null, totalItemsSynced: 0 };
+  if (tallyModule && tallyModule.syncStats) {
+    tallySyncStats = tallyModule.syncStats;
+  }
+
+  return {
+    registered,
+    agentInfo,
+    stats,
+    moduleCounts,
+    tallyStatus,
+    tallySyncStats,
+    scannerActive,
+    version: app.getVersion()
+  };
+});
+
+// Open settings from tray popup
+ipcMain.on('open-settings-from-tray', (event, page) => {
+  openSettings(page || 'tally-integration');
+  if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+    trayPopupWindow.close();
+    trayPopupWindow = null;
+  }
+});
+
+// Trigger immediate Tally sync from tray popup
+ipcMain.handle('trigger-tally-sync', async () => {
+  try {
+    if (pollingService.isRunning) {
+      await pollingService.poll();
+      return { success: true };
+    }
+    return { success: false, error: 'Polling not running' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 
 /**
  * IPC Handlers for settings window

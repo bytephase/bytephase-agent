@@ -1,0 +1,239 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: transparent;
+  color: #ffffff;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.popup-container {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* Arrow pointer at top */
+.popup-arrow {
+  width: 12px;
+  height: 12px;
+  background: #2a2a5e;
+  border: 1px solid #2a2a3e;
+  border-right: none;
+  border-bottom: none;
+  transform: rotate(45deg);
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  margin-left: -6px;
+  z-index: 1;
+}
+
+/* Header */
+.popup-header {
+  background: linear-gradient(135deg, #3b4a8a 0%, #4a3a7a 100%);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.popup-header-icon {
+  width: 32px;
+  height: 32px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.popup-header-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: #ffffff;
+}
+
+.popup-header-text h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.popup-header-text p {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 1px;
+}
+
+/* Sections */
+.popup-body {
+  padding: 12px;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a0a0b0;
+  padding: 4px 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-label svg {
+  width: 14px;
+  height: 14px;
+  fill: #a0a0b0;
+}
+
+/* Status rows */
+.status-card {
+  background: #0f0f1a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.status-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.green { background: #10b981; }
+.status-dot.yellow { background: #f59e0b; }
+.status-dot.red { background: #ef4444; }
+.status-dot.gray { background: #6b6b80; }
+
+.status-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ffffff;
+}
+
+.status-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.status-badge.active { color: #10b981; }
+.status-badge.connected { color: #10b981; }
+.status-badge.disconnected { color: #f59e0b; }
+.status-badge.error { color: #ef4444; }
+
+.status-meta {
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.status-meta-item {
+  font-size: 11px;
+  color: #6b6b80;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 16px;
+}
+
+.status-meta-item svg {
+  width: 12px;
+  height: 12px;
+  fill: #6b6b80;
+}
+
+/* Sync Now button */
+.sync-now-btn {
+  width: 100%;
+  padding: 8px;
+  background: linear-gradient(135deg, #3b4a8a 0%, #4a3a7a 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+  transition: opacity 0.2s;
+}
+
+.sync-now-btn:hover {
+  opacity: 0.9;
+}
+
+.sync-now-btn:active {
+  opacity: 0.7;
+}
+
+.sync-now-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: #ffffff;
+}
+
+/* Footer links */
+.popup-footer {
+  border-top: 1px solid #2a2a3e;
+  padding: 8px 12px;
+}
+
+.footer-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  color: #a0a0b0;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.footer-link:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+}
+
+.footer-link svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.popup-version {
+  text-align: center;
+  font-size: 10px;
+  color: #4a4a5e;
+  padding: 6px 0 4px;
+  border-top: 1px solid #2a2a3e;
+  margin-top: 4px;
+}
