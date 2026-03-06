@@ -274,10 +274,18 @@ async function initializeModules() {
  * Create system tray icon and menu
  */
 function createTray() {
-  // Use platform-specific icon
-  const isWindows = process.platform === 'win32';
-  const iconName = isWindows ? 'icon.ico' : 'icon.png';
-  const iconPath = path.join(__dirname, 'assets', iconName);
+  // Use platform-specific tray icons (properly sized for each OS)
+  let iconPath;
+
+  if (process.platform === 'darwin') {
+    // macOS: Template images auto-handle dark/light mode (must be monochrome)
+    // Electron picks up @2x variant automatically for retina displays
+    iconPath = path.join(__dirname, 'assets', 'tray', 'trayTemplate.png');
+  } else if (process.platform === 'win32') {
+    iconPath = path.join(__dirname, 'assets', 'tray', 'tray-icon.ico');
+  } else {
+    iconPath = path.join(__dirname, 'assets', 'tray', 'tray-icon.png');
+  }
 
   console.log('[TRAY] Loading icon from:', iconPath);
 
@@ -286,17 +294,19 @@ function createTray() {
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
     if (trayIcon.isEmpty()) {
-      console.warn('[TRAY] Icon not found or empty, using fallback');
-      // Try fallback to png
+      console.warn('[TRAY] Tray icon not found, falling back to main icon');
       const fallbackPath = path.join(__dirname, 'assets', 'icon.png');
       trayIcon = nativeImage.createFromPath(fallbackPath);
+      // Resize fallback to proper tray size
+      if (!trayIcon.isEmpty()) {
+        trayIcon = trayIcon.resize({ width: 22, height: 22 });
+      }
     }
   } catch (error) {
     console.warn('[TRAY] Error loading icon:', error.message);
     trayIcon = null;
   }
 
-  // On Windows, we need a valid icon - create a simple one if needed
   if (!trayIcon || trayIcon.isEmpty()) {
     console.warn('[TRAY] Creating empty tray icon');
     trayIcon = nativeImage.createEmpty();
@@ -306,7 +316,7 @@ function createTray() {
   tray.setToolTip('BytePhase Agent v2.0');
 
   // On Windows, double-click tray icon to open settings
-  if (isWindows) {
+  if (process.platform === 'win32') {
     tray.on('double-click', () => {
       openSettings();
     });
