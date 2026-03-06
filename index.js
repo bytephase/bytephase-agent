@@ -26,6 +26,7 @@ const InstanceLockHelper = require('./utils/instance-lock.helper');
 let tray = null;
 let settingsWindow = null;
 let trayPopupWindow = null;
+let partnerConnectWindow = null;
 let agentStatus = {
   registered: false,
   polling: false,
@@ -542,52 +543,99 @@ async function handleDeepLink(url) {
   console.log('[APP] Processing deep link:', url);
 
   try {
-    // Process the deep link
-    const result = await deepLinkService.processDeepLink(url);
+    // Parse the deep link first to determine action
+    const parsed = deepLinkService.parseDeepLink(url);
 
-    if (result.success) {
-      // Check if this is a directory scan request
-      if (result.type === 'scan') {
-        // Open dedicated scan window
+    if (!parsed.success) {
+      NotificationHelper.showConnectionError(parsed.error);
+      return;
+    }
+
+    // Directory scan — process immediately
+    if (parsed.action === 'scan-directory') {
+      const result = await deepLinkService.handleScanDirectory(parsed.params.token);
+      if (result.success) {
         console.log('[APP] Opening directory scan window...');
         openDirectoryScanWindow(result.scanData);
+      } else {
+        NotificationHelper.showConnectionError(result.error);
+      }
+      return;
+    }
+
+    // Partner connect — show approval window
+    if (parsed.action === 'partner-connect' || parsed.action === 'connect') {
+      const tokenService = require('./services/token.service');
+      const validation = tokenService.validateToken(parsed.params.token);
+
+      if (!validation.success) {
+        NotificationHelper.showConnectionError(validation.error);
         return;
       }
 
-      // Regular connection flow
-      // Show success notification
-      NotificationHelper.showConnectionSuccess(result.shopId);
+      // Show partner connection approval window
+      openPartnerConnectWindow({
+        token: parsed.params.token,
+        partnerName: (validation.payload.metadata && validation.payload.metadata.partner_name) || 'BytePhase Partner Platform',
+        partnerUrl: (validation.payload.metadata && validation.payload.metadata.partner_url) || 'partner.bytephase.com',
+        shopName: (validation.payload.metadata && validation.payload.metadata.shop_name) || 'Unknown Shop'
+      });
+      return;
+    }
 
-      // Start polling if not already running
+    // Fallback: process as generic deep link
+    const result = await deepLinkService.processDeepLink(url);
+    if (result.success) {
+      NotificationHelper.showConnectionSuccess(result.shopId);
       if (!agentStatus.polling) {
         await pollingService.start();
         agentStatus.polling = true;
-        console.log('[APP] Polling started after deep link connection');
       }
-
       agentStatus.registered = true;
       updateTrayMenu();
-
-      console.log('[APP] Deep link connection successful');
-
     } else {
-      // Show error notification
       NotificationHelper.showConnectionError(result.error);
-
-      // Open settings window to allow manual entry
-      console.error('[APP] Deep link connection failed:', result.error);
-      setTimeout(() => {
-        openSettings('setup');
-      }, 2000); // Delay to allow notification to show
+      setTimeout(() => openSettings('overview'), 2000);
     }
 
   } catch (error) {
     console.error('[APP] Error handling deep link:', error);
     NotificationHelper.showConnectionError(error.message);
-    setTimeout(() => {
-      openSettings('setup');
-    }, 2000);
+    setTimeout(() => openSettings('overview'), 2000);
   }
+}
+
+/**
+ * Open partner connection approval window
+ */
+function openPartnerConnectWindow(connectData) {
+  if (partnerConnectWindow) {
+    partnerConnectWindow.focus();
+    return;
+  }
+
+  partnerConnectWindow = new BrowserWindow({
+    width: 480,
+    height: 560,
+    resizable: false,
+    center: true,
+    backgroundColor: '#0f0f1a',
+    title: 'Partner Connection - BytePhase Agent',
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  partnerConnectWindow.loadFile(path.join(__dirname, 'ui', 'partner-connect.html'));
+
+  partnerConnectWindow.webContents.on('did-finish-load', () => {
+    partnerConnectWindow.webContents.send('init-connect', connectData);
+  });
+
+  partnerConnectWindow.on('closed', () => {
+    partnerConnectWindow = null;
+  });
 }
 
 /**
@@ -994,6 +1042,41 @@ ipcMain.handle('get-module-health', async () => {
     return { success: true, health };
   } catch (error) {
     return { success: false, error: error.message };
+  }
+});
+
+/**
+ * IPC Handlers for partner connection
+ */
+
+// Approve partner connection from approval window
+ipcMain.handle('approve-partner-connection', async (event, token) => {
+  try {
+    const result = await deepLinkService.handleConnect(token);
+
+    if (result.success) {
+      // Start polling
+      if (!agentStatus.polling) {
+        await pollingService.start();
+        agentStatus.polling = true;
+      }
+      agentStatus.registered = true;
+      updateTrayMenu();
+
+      NotificationHelper.showConnectionSuccess(result.shopId);
+      return result;
+    }
+
+    return { success: false, error: result.error || 'Connection failed' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Cancel partner connection
+ipcMain.on('cancel-partner-connection', () => {
+  if (partnerConnectWindow && !partnerConnectWindow.isDestroyed()) {
+    partnerConnectWindow.close();
   }
 });
 

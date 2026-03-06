@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Partner Connection - BytePhase Agent</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #0f0f1a;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* ========== REQUEST SCREEN ========== */
+    .connect-card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a3e;
+      border-radius: 16px;
+      padding: 28px;
+      width: 420px;
+      max-width: 100%;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .card-header-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #3b4a8a 0%, #4a3a7a 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card-header-icon svg {
+      width: 20px;
+      height: 20px;
+      fill: #ffffff;
+    }
+
+    .card-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .card-desc {
+      font-size: 13px;
+      color: #a0a0b0;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .info-block {
+      background: #141422;
+      border: 1px solid #2a2a3e;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .info-block-label {
+      font-size: 11px;
+      color: #6b6b80;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .info-block-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .info-block-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #3b4a8a 0%, #4a3a7a 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .info-block-icon svg {
+      width: 16px;
+      height: 16px;
+      fill: #ffffff;
+    }
+
+    .info-block-text h4 {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .info-block-text p {
+      font-size: 12px;
+      color: #6b6b80;
+    }
+
+    .notice {
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 12px;
+      color: #a0b0d0;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      font-family: inherit;
+      transition: opacity 0.15s;
+    }
+
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-primary {
+      background: #3b82f6;
+      color: #ffffff;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: #a0a0b0;
+      border: 1px solid #2a2a3e;
+    }
+
+    .token-preview {
+      text-align: center;
+      font-size: 11px;
+      color: #4a4a5e;
+      margin-top: 14px;
+      word-break: break-all;
+    }
+
+    /* ========== SUCCESS SCREEN ========== */
+    .success-card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a3e;
+      border-radius: 16px;
+      padding: 32px;
+      width: 420px;
+      max-width: 100%;
+      text-align: left;
+    }
+
+    .success-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .success-icon {
+      width: 40px;
+      height: 40px;
+      background: rgba(16, 185, 129, 0.15);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .success-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: #10b981;
+    }
+
+    .success-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #10b981;
+    }
+
+    .success-msg {
+      font-size: 13px;
+      color: #a0a0b0;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .redirect-notice {
+      padding: 10px 14px;
+      background: #141422;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #6b6b80;
+    }
+
+    /* ========== ERROR SCREEN ========== */
+    .error-card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a3e;
+      border-radius: 16px;
+      padding: 32px;
+      width: 420px;
+      max-width: 100%;
+    }
+
+    .error-icon {
+      width: 40px;
+      height: 40px;
+      background: rgba(239, 68, 68, 0.15);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+
+    .error-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: #ef4444;
+    }
+
+    .error-card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #ef4444;
+      margin-bottom: 8px;
+    }
+
+    .error-card p {
+      font-size: 13px;
+      color: #a0a0b0;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Connection Request Screen -->
+  <div class="screen active" id="screen-request">
+    <div class="connect-card">
+      <div class="card-header">
+        <div class="card-header-icon">
+          <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+        </div>
+        <h2>Partner Connection Request</h2>
+      </div>
+
+      <p class="card-desc">Authorize BytePhase Agent to connect with a partner platform</p>
+
+      <div class="info-block">
+        <div class="info-block-label">Partner Platform</div>
+        <div class="info-block-row">
+          <div class="info-block-icon">
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+          </div>
+          <div class="info-block-text">
+            <h4 id="partnerName">BytePhase Partner Platform</h4>
+            <p id="partnerUrl">partner.bytephase.com</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="info-block">
+        <div class="info-block-label">Shop Name</div>
+        <div class="info-block-row">
+          <div class="info-block-icon">
+            <svg viewBox="0 0 24 24"><path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/></svg>
+          </div>
+          <div class="info-block-text">
+            <h4 id="shopName">--</h4>
+            <p>Requesting connection</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="notice">
+        This will allow BytePhase Partner Platform to sync data with your Tally instance through BytePhase Agent.
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="connectBtn" onclick="approveConnection()">Connect</button>
+        <button class="btn btn-secondary" onclick="cancelConnection()">Cancel</button>
+      </div>
+
+      <div class="token-preview" id="tokenPreview"></div>
+    </div>
+  </div>
+
+  <!-- Connection Success Screen -->
+  <div class="screen" id="screen-success">
+    <div class="success-card">
+      <div class="success-header">
+        <div class="success-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </div>
+        <h2>Connection Successful!</h2>
+      </div>
+      <p class="success-msg">Your agent is now connected to BytePhase Partner Platform</p>
+      <div class="redirect-notice">Redirecting to settings...</div>
+    </div>
+  </div>
+
+  <!-- Connection Error Screen -->
+  <div class="screen" id="screen-error">
+    <div class="error-card">
+      <div class="error-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+      </div>
+      <h2>Connection Failed</h2>
+      <p id="errorMessage">An error occurred while connecting.</p>
+      <button class="btn btn-secondary" onclick="window.close()" style="width: 100%;">Close</button>
+    </div>
+  </div>
+
+  <script src="partner-connect-renderer.js"></script>
+</body>
+</html>
