@@ -502,28 +502,31 @@ function updateTrayMenu() {
 /**
  * Open settings window
  */
-function openSettings(tab = 'setup') {
+function openSettings(page = 'tally-integration') {
   if (settingsWindow) {
     settingsWindow.focus();
+    settingsWindow.webContents.send('navigate-to', page);
     return;
   }
 
   settingsWindow = new BrowserWindow({
-    width: 700,
-    height: 800,
+    width: 900,
+    height: 650,
+    minWidth: 800,
+    minHeight: 550,
     title: 'BytePhase Agent - Settings',
     resizable: true,
+    backgroundColor: '#0f0f1a',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
   });
 
-  settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings.html'));
+  settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings-v2.html'));
 
-  // Send initial tab when ready
   settingsWindow.webContents.on('did-finish-load', () => {
-    settingsWindow.webContents.send('set-tab', tab);
+    settingsWindow.webContents.send('navigate-to', page);
   });
 
   settingsWindow.on('closed', () => {
@@ -697,8 +700,18 @@ function startStatusUpdates() {
     // Get module statuses
     agentStatus.modules = moduleManager.getAll();
 
-    // Update tray menu
+    // Update tray menu (native fallback)
     updateTrayMenu();
+
+    // Push status to settings window if open
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('status-update', {
+        stats: agentStatus.stats,
+        modules: agentStatus.modules,
+        registered: agentStatus.registered,
+        polling: agentStatus.polling
+      });
+    }
   }, 5000); // Update every 5 seconds
 }
 
@@ -982,6 +995,78 @@ ipcMain.handle('get-module-health', async () => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
+
+/**
+ * IPC Handlers for Tally configuration
+ */
+
+// Get Tally module config
+ipcMain.handle('get-tally-config', () => {
+  const tallyModule = moduleManager.getModule('tally');
+  if (!tallyModule) {
+    return { success: false, error: 'Tally module not found' };
+  }
+  return { success: true, config: tallyModule.config };
+});
+
+// Save Tally module config
+ipcMain.handle('save-tally-config', async (event, config) => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule) {
+      return { success: false, error: 'Tally module not found' };
+    }
+
+    // Merge config
+    Object.assign(tallyModule.config, config);
+
+    // Update tally service connection params
+    if (tallyModule.tallyService) {
+      if (config.tallyHost) tallyModule.tallyService.host = config.tallyHost;
+      if (config.tallyPort) tallyModule.tallyService.port = config.tallyPort;
+      tallyModule.tallyService.baseUrl = `http://${tallyModule.tallyService.host}:${tallyModule.tallyService.port}`;
+    }
+
+    // Persist to agent.config.json
+    const configPath = path.join(__dirname, 'config', 'agent.config.json');
+    const agentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    agentConfig.modules.tally.config = { ...agentConfig.modules.tally.config, ...config };
+    fs.writeFileSync(configPath, JSON.stringify(agentConfig, null, 2));
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Detect Tally company name
+ipcMain.handle('detect-tally-company', async () => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.tallyService) {
+      return { success: false, error: 'Tally module not available' };
+    }
+
+    // Clear cached value to force re-detection
+    tallyModule.tallyService.companyName = null;
+    const company = await tallyModule.tallyService.getCompanyName();
+    return { success: true, company };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Get Tally sync stats
+ipcMain.handle('get-tally-sync-stats', () => {
+  const tallyModule = moduleManager.getModule('tally');
+  if (!tallyModule) {
+    return { success: false, error: 'Tally module not found' };
+  }
+  return {
+    success: true,
+    syncStats: tallyModule.syncStats || { lastSyncTime: null, totalItemsSynced: 0, syncHistory: [] }
+  };
 });
 
 // Directory scan - select directory

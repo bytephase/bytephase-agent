@@ -28,6 +28,13 @@ class TallyModule extends BaseModule {
     };
 
     this.tallyService = null;
+
+    // Sync statistics (in-memory, reset on restart)
+    this.syncStats = {
+      lastSyncTime: null,
+      totalItemsSynced: 0,
+      syncHistory: []  // { timestamp, status, itemCount, error, duration }
+    };
   }
 
   async initialize() {
