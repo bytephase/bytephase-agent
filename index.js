@@ -348,7 +348,7 @@ function createTray() {
     tray.popUpContextMenu(rightClickMenu);
   });
 
-  updateTrayMenu();
+  updateTrayStatus();
 
   console.log('[TRAY] System tray created successfully');
 }
@@ -422,82 +422,28 @@ function createTrayPopup(bounds) {
 }
 
 /**
- * Update tray menu with current status
+ * Update tray tooltip and push status to popup if open
  */
-function updateTrayMenu() {
+function updateTrayStatus() {
+  if (!tray) return;
+
   const registered = authService.isRegistered();
-  const agentInfo = registered ? authService.getAgentInfo() : {};
   const stats = pollingService.getStats();
-  const queueStats = queueService.getStats();
-  const moduleCounts = moduleManager.getCount();
 
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'BytePhase Agent v2.0',
-      enabled: false,
-      icon: nativeImage.createEmpty()
-    },
-    { type: 'separator' },
-    {
-      label: registered ? `✓ Registered (${agentInfo.shopId})` : '✗ Not Registered',
-      enabled: false
-    },
-    {
-      label: `Modules: ${moduleCounts.enabled}/${moduleCounts.total} active`,
-      enabled: false
-    },
-    {
-      label: agentStatus.polling ? '✓ Polling Active' : '✗ Polling Stopped',
-      enabled: false
-    },
-    { type: 'separator' },
-    {
-      label: `Jobs Processed: ${stats.jobsProcessed || 0}`,
-      enabled: false
-    },
-    {
-      label: `Queue: ${queueStats.pending || 0} pending`,
-      enabled: false
-    },
-    { type: 'separator' },
-    {
-      label: 'Settings',
-      click: () => openSettings()
-    },
-    {
-      label: 'Modules',
-      click: () => openSettings('modules')
-    },
-    {
-      label: registered ? 'Stop Polling' : 'Start Polling',
-      enabled: registered,
-      click: () => togglePolling()
-    },
-    {
-      label: 'View Logs',
-      click: () => {
-        const logsPath = path.join(app.getPath('userData'), 'logs');
-        require('electron').shell.openPath(logsPath);
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: async () => {
-        pollingService.stop();
+  // Update tooltip with current status
+  const status = registered
+    ? `BytePhase Agent v2.0 - ${agentStatus.polling ? 'Polling' : 'Idle'} (${stats.jobsProcessed || 0} jobs)`
+    : 'BytePhase Agent v2.0 - Not Registered';
+  tray.setToolTip(status);
 
-        // Disable all modules
-        for (const moduleName of moduleManager.getEnabled()) {
-          await moduleManager.disable(moduleName);
-        }
-
-        queueService.close();
-        app.quit();
-      }
-    }
-  ]);
-
-  tray.setContextMenu(contextMenu);
+  // Push updated data to tray popup if it's open
+  if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+    trayPopupWindow.webContents.send('status-update', {
+      stats,
+      registered,
+      polling: agentStatus.polling
+    });
+  }
 }
 
 /**
@@ -592,7 +538,7 @@ async function handleDeepLink(url) {
         agentStatus.polling = true;
       }
       agentStatus.registered = true;
-      updateTrayMenu();
+      updateTrayStatus();
     } else {
       NotificationHelper.showConnectionError(result.error);
       setTimeout(() => openSettings('overview'), 2000);
@@ -683,7 +629,7 @@ async function togglePolling() {
     agentStatus.polling = true;
     console.log('[APP] Polling started');
   }
-  updateTrayMenu();
+  updateTrayStatus();
 }
 
 /**
@@ -748,8 +694,8 @@ function startStatusUpdates() {
     // Get module statuses
     agentStatus.modules = moduleManager.getAll();
 
-    // Update tray menu (native fallback)
-    updateTrayMenu();
+    // Update tray tooltip and popup
+    updateTrayStatus();
 
     // Push status to settings window if open
     if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -922,7 +868,7 @@ ipcMain.handle('connect-with-api-key', async (event, apiKey) => {
 
     agentStatus.registered = true;
     agentStatus.modules = moduleManager.getAll();
-    updateTrayMenu();
+    updateTrayStatus();
 
     console.log('[APP] Agent configured and connected successfully');
 
@@ -945,7 +891,7 @@ ipcMain.handle('save-credentials', async (event, credentials) => {
     }
 
     agentStatus.registered = true;
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -961,7 +907,7 @@ ipcMain.handle('clear-credentials', () => {
     authService.clearCredentials();
     agentStatus.registered = false;
     agentStatus.polling = false;
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -1012,7 +958,7 @@ ipcMain.handle('enable-module', async (event, moduleName, config) => {
   try {
     await moduleManager.enable(moduleName, config);
     agentStatus.modules = moduleManager.getAll();
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -1026,7 +972,7 @@ ipcMain.handle('disable-module', async (event, moduleName) => {
   try {
     await moduleManager.disable(moduleName);
     agentStatus.modules = moduleManager.getAll();
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -1061,7 +1007,7 @@ ipcMain.handle('approve-partner-connection', async (event, token) => {
         agentStatus.polling = true;
       }
       agentStatus.registered = true;
-      updateTrayMenu();
+      updateTrayStatus();
 
       NotificationHelper.showConnectionSuccess(result.shopId);
       return result;
