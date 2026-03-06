@@ -656,16 +656,11 @@ class DirectoryScannerModule extends BaseModule {
 
       console.log('[SCANNER] Scan statistics:', JSON.stringify(stats, null, 2));
 
-      // Transform to DevExtreme format
-      console.log('[SCANNER] Transforming to DevExtreme format...');
-      const formatted = DevExtremeFormatter.transform(tree, {
-        includeRoot: false,
-        includePath: true,
-        includeExtension: true,
-        includeFileType: true
-      });
+      // Flatten tree for upload (flat array = reliable chunking for large scans)
+      console.log('[SCANNER] Flattening tree for upload...');
+      const formatted = DevExtremeFormatter.flatten(tree, { includeRoot: false });
 
-      console.log('[SCANNER] Transformation completed. Formatted items count:', formatted.length);
+      console.log('[SCANNER] Flatten completed. Total items:', formatted.length);
 
       const statistics = DevExtremeFormatter.getStatistics(tree);
 
@@ -768,8 +763,8 @@ class DirectoryScannerModule extends BaseModule {
 
     const axios = require('axios');
 
-    // Chunk size: 5000 items per chunk (adjust based on average item size)
-    const CHUNK_SIZE = 5000;
+    // Chunk size: 1000 items per chunk (safe for nginx default limits on staging/prod)
+    const CHUNK_SIZE = 1000;
     const totalItems = formatted.length;
     const totalChunks = Math.ceil(totalItems / CHUNK_SIZE);
 
@@ -818,6 +813,7 @@ class DirectoryScannerModule extends BaseModule {
             scan_data: chunk,
             statistics: isLastChunk ? statistics : null, // Only send stats with last chunk
             agent_id: agentId || null,
+            data_format: 'flat',
             // Chunking metadata
             is_chunked: true,
             chunk_index: chunkIndex,
@@ -902,6 +898,7 @@ class DirectoryScannerModule extends BaseModule {
           scan_data: scanData,
           statistics: statistics,
           agent_id: agentId || null,
+          data_format: 'flat',
           is_chunked: isChunked,
           chunk_index: 0,
           total_chunks: 1,
