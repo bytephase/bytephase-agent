@@ -33,11 +33,17 @@ function switchSubTab(tab) {
 
 // ============ TALLY CONFIGURATION ============
 
+// Track loaded sync config for the current session
+let _currentSyncConfig = {};
+let _stockGroups = [];
+
 async function loadTallyData() {
   try {
     const result = await ipcRenderer.invoke('get-tally-config');
     if (result && result.success) {
       const config = result.config;
+      _currentSyncConfig = config;
+
       document.getElementById('tallyHost').value = config.tallyHost || 'localhost';
       document.getElementById('tallyPort').value = config.tallyPort || 9000;
       document.getElementById('autoDetectCompany').checked = config.tallyCompany === null;
@@ -45,6 +51,17 @@ async function loadTallyData() {
 
       if (config.tallyCompany) {
         document.getElementById('tallyCompanyName').value = config.tallyCompany;
+      }
+
+      // Set sync interval dropdown
+      const intervalSelect = document.getElementById('syncIntervalSelect');
+      if (intervalSelect && config.syncIntervalMinutes) {
+        intervalSelect.value = String(config.syncIntervalMinutes);
+      }
+
+      // If a company is already selected, show the config cards
+      if (config.selectedCompany) {
+        await showCompanySelection();
       }
     }
   } catch (error) {
@@ -94,6 +111,8 @@ async function testTallyConnection() {
 
     if (result.success) {
       btn.textContent = 'Connected!';
+      // Show company selection on successful connection
+      showCompanySelection();
       setTimeout(() => { btn.textContent = 'Test Connection'; btn.disabled = false; }, 2000);
     } else {
       btn.textContent = 'Failed';
@@ -131,6 +150,191 @@ function testPartnerConnection() {
   ipcRenderer.send('test-partner-connect');
 }
 
+// ============ COMPANY SELECTION & STOCK GROUPS ============
+
+async function showCompanySelection() {
+  const card = document.getElementById('companySelectionCard');
+  card.style.display = 'block';
+  await refreshCompanies();
+}
+
+async function refreshCompanies() {
+  const select = document.getElementById('companySelect');
+  const btn = document.getElementById('refreshCompaniesBtn');
+
+  if (btn) btn.disabled = true;
+
+  try {
+    const result = await ipcRenderer.invoke('list-tally-companies');
+    if (result && result.success && result.companies) {
+      select.innerHTML = '<option value="">-- Select Company --</option>';
+      for (const company of result.companies) {
+        const opt = document.createElement('option');
+        opt.value = company;
+        opt.textContent = company;
+        if (company === _currentSyncConfig.selectedCompany) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      }
+
+      // If company was already selected, load stock groups
+      if (_currentSyncConfig.selectedCompany) {
+        await loadStockGroups(_currentSyncConfig.selectedCompany);
+      }
+    }
+  } catch (error) {
+    console.error('[SETTINGS] Failed to load companies:', error);
+  }
+
+  if (btn) btn.disabled = false;
+}
+
+async function onCompanySelected() {
+  const select = document.getElementById('companySelect');
+  const company = select.value;
+
+  if (!company) {
+    document.getElementById('stockGroupCard').style.display = 'none';
+    return;
+  }
+
+  await loadStockGroups(company);
+}
+
+async function loadStockGroups(companyName) {
+  const card = document.getElementById('stockGroupCard');
+  const tree = document.getElementById('stockGroupTree');
+
+  card.style.display = 'block';
+  tree.innerHTML = '<div class="empty-state"><p>Loading stock groups...</p></div>';
+
+  try {
+    const result = await ipcRenderer.invoke('list-tally-stock-groups', companyName);
+    if (result && result.success && result.groups) {
+      _stockGroups = result.groups;
+      renderStockGroupTree(result.groups);
+    } else {
+      tree.innerHTML = '<div class="empty-state"><p>Failed to load stock groups</p></div>';
+    }
+  } catch (error) {
+    tree.innerHTML = `<div class="empty-state"><p>Error: ${error.message}</p></div>`;
+  }
+}
+
+function renderStockGroupTree(groups) {
+  const tree = document.getElementById('stockGroupTree');
+  const selectedGroups = _currentSyncConfig.syncGroups || [];
+
+  // Build parent-child hierarchy
+  const roots = groups.filter(g => !g.parent);
+  const childrenOf = (parentName) => groups.filter(g => g.parent === parentName);
+
+  let html = '';
+
+  function renderGroup(group, isChild) {
+    const checked = selectedGroups.length === 0 || selectedGroups.includes(group.name);
+    const children = childrenOf(group.name);
+
+    html += `
+      <div class="group-item ${isChild ? 'child' : ''}" data-group="${escapeHtml(group.name)}" data-parent="${escapeHtml(group.parent || '')}">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="onGroupToggled(this)">
+        <span class="group-item-label">${escapeHtml(group.name)}</span>
+      </div>
+    `;
+
+    for (const child of children) {
+      renderGroup(child, true);
+    }
+  }
+
+  for (const root of roots) {
+    renderGroup(root, false);
+  }
+
+  // Also render any orphan groups (parent not in list)
+  const allNames = new Set(groups.map(g => g.name));
+  const orphans = groups.filter(g => g.parent && !allNames.has(g.parent) && !roots.includes(g));
+  for (const orphan of orphans) {
+    renderGroup(orphan, false);
+  }
+
+  if (!html) {
+    tree.innerHTML = '<div class="empty-state"><p>No stock groups found</p></div>';
+    return;
+  }
+
+  tree.innerHTML = html;
+  updateGroupSelectionCount();
+}
+
+function onGroupToggled(checkbox) {
+  const item = checkbox.closest('.group-item');
+  const groupName = item.dataset.group;
+
+  // Toggle children if this is a parent
+  const children = document.querySelectorAll(`.group-item[data-parent="${groupName}"]`);
+  children.forEach(child => {
+    child.querySelector('input[type="checkbox"]').checked = checkbox.checked;
+  });
+
+  updateGroupSelectionCount();
+}
+
+function selectAllGroups() {
+  document.querySelectorAll('#stockGroupTree input[type="checkbox"]').forEach(cb => cb.checked = true);
+  updateGroupSelectionCount();
+}
+
+function deselectAllGroups() {
+  document.querySelectorAll('#stockGroupTree input[type="checkbox"]').forEach(cb => cb.checked = false);
+  updateGroupSelectionCount();
+}
+
+function updateGroupSelectionCount() {
+  const checked = document.querySelectorAll('#stockGroupTree input[type="checkbox"]:checked').length;
+  const total = document.querySelectorAll('#stockGroupTree input[type="checkbox"]').length;
+  const el = document.getElementById('groupSelectionCount');
+  if (el) el.textContent = `${checked} / ${total} groups selected`;
+}
+
+function getSelectedGroups() {
+  const groups = [];
+  document.querySelectorAll('#stockGroupTree .group-item').forEach(item => {
+    const cb = item.querySelector('input[type="checkbox"]');
+    if (cb && cb.checked) {
+      groups.push(item.dataset.group);
+    }
+  });
+  return groups;
+}
+
+async function saveSyncConfig() {
+  const company = document.getElementById('companySelect').value;
+  const syncGroups = getSelectedGroups();
+  const allGroups = document.querySelectorAll('#stockGroupTree input[type="checkbox"]').length;
+
+  // If all groups are selected, pass empty array (means "sync all")
+  const effectiveGroups = syncGroups.length === allGroups ? [] : syncGroups;
+
+  const config = {
+    selectedCompany: company || null,
+    syncGroups: effectiveGroups
+  };
+
+  try {
+    const result = await ipcRenderer.invoke('save-tally-sync-config', config);
+    if (result.success) {
+      _currentSyncConfig = { ..._currentSyncConfig, ...config };
+      alert('Sync configuration saved successfully');
+    } else {
+      alert('Failed to save: ' + (result.error || 'Unknown error'));
+    }
+  } catch (error) {
+    alert('Error saving config: ' + error.message);
+  }
+}
+
 // Toggle handlers
 document.addEventListener('DOMContentLoaded', () => {
   const autoCompany = document.getElementById('autoDetectCompany');
@@ -161,6 +365,35 @@ document.addEventListener('DOMContentLoaded', () => {
   ipcRenderer.on('tally-sync-progress', (event, progress) => {
     updateSyncProgress(progress);
   });
+
+  // Listen for sync completion
+  ipcRenderer.on('tally-sync-complete', (event, data) => {
+    // Hide inline progress
+    const inlineEl = document.getElementById('syncProgressInline');
+    if (inlineEl) inlineEl.style.display = 'none';
+
+    // Close modal
+    closeSyncModal();
+
+    // Reload sync status
+    const syncTab = document.getElementById('tab-sync-status');
+    if (syncTab && syncTab.classList.contains('active')) {
+      loadSyncStatusData();
+    }
+  });
+
+  // Listen for sync errors
+  ipcRenderer.on('tally-sync-error', (event, data) => {
+    const inlineEl = document.getElementById('syncProgressInline');
+    if (inlineEl) inlineEl.style.display = 'none';
+
+    closeSyncModal();
+
+    const syncTab = document.getElementById('tab-sync-status');
+    if (syncTab && syncTab.classList.contains('active')) {
+      loadSyncStatusData();
+    }
+  });
 });
 
 // ============ SYNC STATUS ============
@@ -170,19 +403,39 @@ async function loadSyncStatusData() {
     const result = await ipcRenderer.invoke('get-tally-sync-stats');
     if (result && result.success && result.syncStats) {
       const stats = result.syncStats;
+      const clockSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#6b6b80"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>';
 
-      // Last sync time
-      if (stats.lastSyncTime) {
-        document.getElementById('lastSyncTime').innerHTML =
-          `<svg width="14" height="14" viewBox="0 0 24 24" fill="#6b6b80"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>` +
-          formatRelativeTime(stats.lastSyncTime);
-        document.getElementById('lastSyncDate').textContent = new Date(stats.lastSyncTime).toLocaleString();
+      // Last delta sync
+      const deltaSyncEl = document.getElementById('lastDeltaSyncTime');
+      const deltaSyncDateEl = document.getElementById('lastDeltaSyncDate');
+      if (stats.lastDeltaSyncTime) {
+        deltaSyncEl.innerHTML = clockSvg + formatRelativeTime(stats.lastDeltaSyncTime);
+        deltaSyncDateEl.textContent = new Date(stats.lastDeltaSyncTime).toLocaleString();
+      } else {
+        deltaSyncEl.innerHTML = clockSvg + 'Never';
+        deltaSyncDateEl.textContent = '--';
       }
 
-      // Total items
-      document.getElementById('totalItemsSynced').innerHTML =
-        `<svg width="14" height="14" viewBox="0 0 24 24" fill="#10b981"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>` +
-        (stats.totalItemsSynced || 0).toLocaleString();
+      // Last full sync
+      const fullSyncEl = document.getElementById('lastFullSyncTime');
+      const fullSyncDateEl = document.getElementById('lastFullSyncDate');
+      if (stats.lastFullSyncTime) {
+        fullSyncEl.innerHTML = clockSvg + formatRelativeTime(stats.lastFullSyncTime);
+        fullSyncDateEl.textContent = new Date(stats.lastFullSyncTime).toLocaleString();
+      } else {
+        fullSyncEl.innerHTML = clockSvg + 'Never';
+        fullSyncDateEl.textContent = '--';
+      }
+
+      // Sync status
+      const statusEl = document.getElementById('syncCurrentStatus');
+      const syncStatus = stats.syncStatus || 'idle';
+      statusEl.innerHTML = `<span class="sync-status-badge ${syncStatus}">${capitalize(syncStatus)}</span>`;
+
+      // Failure count
+      const failureEl = document.getElementById('syncFailureCount');
+      const failures = stats.consecutiveFailures || 0;
+      failureEl.textContent = failures > 0 ? `${failures} consecutive failure${failures > 1 ? 's' : ''}` : 'No failures';
 
       // Sync history
       renderSyncHistory(stats.syncHistory || []);
@@ -202,15 +455,18 @@ function renderSyncHistory(history) {
 
   list.innerHTML = history.slice(0, 10).map((entry, index) => {
     const statusClass = entry.status || 'completed';
-    const hasError = entry.error && (statusClass === 'failed' || statusClass === 'partial');
+    const hasError = entry.error && (statusClass === 'failed' || statusClass === 'partial' || statusClass === 'abandoned');
+    const syncType = entry.syncType || 'delta';
     const iconSvg = statusClass === 'completed'
       ? '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
-      : statusClass === 'partial'
+      : statusClass === 'partial' || statusClass === 'abandoned'
         ? '<svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>'
         : '<svg viewBox="0 0 24 24"><path d="M12 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm1-13h-2v6h2V7zm0 8h-2v2h2v-2z"/></svg>';
 
     const time = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '--';
-    const items = entry.itemCount ? `${entry.itemCount.toLocaleString()} items synced` : 'No items synced';
+    const itemsSynced = entry.itemsSynced || entry.itemCount || 0;
+    const items = itemsSynced > 0 ? `${itemsSynced.toLocaleString()} items synced` : 'No items synced';
+    const duration = entry.duration ? ` (${Math.round(entry.duration / 1000)}s)` : '';
 
     return `
       <div class="sync-entry">
@@ -219,7 +475,8 @@ function renderSyncHistory(history) {
             <div class="sync-entry-icon ${statusClass}">${iconSvg}</div>
             <div>
               <span class="sync-entry-time">${time}</span>
-              <span class="sync-entry-status ${statusClass}">${capitalize(statusClass)}</span>
+              <span class="sync-type-badge ${syncType}">${capitalize(syncType)}</span>
+              <span class="sync-entry-status ${statusClass}">${capitalize(statusClass)}${duration}</span>
             </div>
           </div>
           ${hasError ? `<div class="sync-entry-expand" onclick="toggleEntryDetails(${index})"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></div>` : ''}
@@ -241,27 +498,32 @@ function toggleEntryDetails(index) {
   }
 }
 
-async function triggerSyncNow() {
-  const btn = document.getElementById('syncNowBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg> Syncing...';
+async function triggerSyncNow(syncType = 'delta') {
+  const deltaBtn = document.getElementById('deltaSyncNowBtn');
+  const fullBtn = document.getElementById('fullSyncNowBtn');
+
+  if (deltaBtn) deltaBtn.disabled = true;
+  if (fullBtn) fullBtn.disabled = true;
 
   try {
-    await ipcRenderer.invoke('trigger-tally-sync');
+    const result = await ipcRenderer.invoke('trigger-tally-sync', syncType);
+    if (result && !result.success) {
+      console.error('[SETTINGS] Sync failed:', result.error);
+    }
   } catch (error) {
     console.error('[SETTINGS] Sync trigger failed:', error);
   }
 
   setTimeout(() => {
-    btn.disabled = false;
-    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg> Sync Now';
+    if (deltaBtn) deltaBtn.disabled = false;
+    if (fullBtn) fullBtn.disabled = false;
     loadSyncStatusData();
-  }, 3000);
+  }, 2000);
 }
 
 function saveSyncInterval() {
   const interval = document.getElementById('syncIntervalSelect').value;
-  ipcRenderer.invoke('save-tally-config', { syncIntervalMinutes: parseInt(interval) });
+  ipcRenderer.invoke('save-tally-sync-config', { syncIntervalMinutes: parseInt(interval) });
 }
 
 // ============ SYNC PROGRESS MODAL ============
@@ -275,19 +537,49 @@ function closeSyncModal() {
 }
 
 function updateSyncProgress(progress) {
-  showSyncModal();
+  // Update inline progress indicator
+  const inlineEl = document.getElementById('syncProgressInline');
+  if (inlineEl) {
+    inlineEl.style.display = 'block';
 
-  const percent = progress.percent || 0;
-  document.getElementById('syncProgressBar').style.width = `${percent}%`;
-  document.getElementById('syncPercentage').textContent = `${Math.round(percent)}% complete`;
-  document.getElementById('syncItemProgress').textContent = `${(progress.processed || 0).toLocaleString()} / ${(progress.total || 0).toLocaleString()}`;
-  document.getElementById('syncCurrentOp').textContent = progress.operation || 'Processing...';
-  document.getElementById('syncProcessedCount').textContent = (progress.processed || 0).toLocaleString();
-  document.getElementById('syncTotalCount').textContent = (progress.total || 0).toLocaleString();
+    const percent = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
 
-  if (percent >= 100) {
-    setTimeout(() => closeSyncModal(), 2000);
+    const badge = document.getElementById('syncProgressBadge');
+    if (badge) badge.textContent = `${capitalize(progress.syncType || 'delta')} Sync`;
+
+    const msg = document.getElementById('syncProgressMessage');
+    if (msg) msg.textContent = progress.message || 'Processing...';
+
+    const bar = document.getElementById('syncInlineProgressBar');
+    if (bar) bar.style.width = `${percent}%`;
+
+    const detail = document.getElementById('syncProgressDetail');
+    if (detail) detail.textContent = `${(progress.current || 0).toLocaleString()} / ${(progress.total || 0).toLocaleString()} items`;
   }
+
+  // Also update modal if open
+  const percent = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+  const progressBar = document.getElementById('syncProgressBar');
+  if (progressBar) progressBar.style.width = `${percent}%`;
+
+  const percentEl = document.getElementById('syncPercentage');
+  if (percentEl) percentEl.textContent = `${percent}% complete`;
+
+  const itemProgress = document.getElementById('syncItemProgress');
+  if (itemProgress) itemProgress.textContent = `${(progress.current || 0).toLocaleString()} / ${(progress.total || 0).toLocaleString()}`;
+
+  const opEl = document.getElementById('syncCurrentOp');
+  if (opEl) opEl.textContent = progress.message || 'Processing...';
+
+  const processedEl = document.getElementById('syncProcessedCount');
+  if (processedEl) processedEl.textContent = (progress.current || 0).toLocaleString();
+
+  const totalEl = document.getElementById('syncTotalCount');
+  if (totalEl) totalEl.textContent = (progress.total || 0).toLocaleString();
+
+  // Update sync status badge
+  const statusEl = document.getElementById('syncCurrentStatus');
+  if (statusEl) statusEl.innerHTML = '<span class="sync-status-badge syncing">Syncing</span>';
 }
 
 function cancelSync() {
@@ -530,10 +822,4 @@ function formatRelativeTime(isoString) {
 
 function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
