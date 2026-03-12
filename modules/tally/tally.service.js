@@ -219,17 +219,324 @@ class TallyService {
   }
 
   /**
-   * Read stock items from Tally
+   * List all open companies in Tally
    */
-  async readStockItems(data) {
-    console.log('[TALLY] Reading stock items');
+  async listCompanies() {
+    console.log('[TALLY] Listing companies');
 
-    if (!await this.isRunning()) {
-      throw new Error('Tally is not running');
+    const xml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>ListOfCompanies</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY/>
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="ListOfCompanies">
+                  <TYPE>Company</TYPE>
+                  <FETCH>NAME</FETCH>
+                </COLLECTION>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>
+    `;
+
+    const response = await this.sendRequest(xml);
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(response);
+
+    const companies = [];
+    const collection = result?.ENVELOPE?.BODY?.[0]?.DATA?.[0]?.COLLECTION?.[0];
+    if (collection && collection.COMPANY) {
+      for (const comp of collection.COMPANY) {
+        const name = comp.NAME?.[0] || comp.$.NAME;
+        if (name) companies.push(name);
+      }
     }
 
-    // Implementation pending
-    return { message: 'Read stock items - to be implemented' };
+    console.log(`[TALLY] Found ${companies.length} companies`);
+    return companies;
+  }
+
+  /**
+   * List all stock groups with parent hierarchy
+   */
+  async listStockGroups(companyName) {
+    console.log(`[TALLY] Listing stock groups for company: ${companyName}`);
+
+    const xml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>StockGroupList</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${companyName}</SVCURRENTCOMPANY>
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="StockGroupList">
+                  <TYPE>StockGroup</TYPE>
+                  <FETCH>NAME, PARENT</FETCH>
+                </COLLECTION>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>
+    `;
+
+    const response = await this.sendRequest(xml);
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(response);
+
+    const groups = [];
+    const collection = result?.ENVELOPE?.BODY?.[0]?.DATA?.[0]?.COLLECTION?.[0];
+    if (collection && collection.STOCKGROUP) {
+      for (const group of collection.STOCKGROUP) {
+        const name = group.NAME?.[0] || group.$.NAME;
+        const parent = group.PARENT?.[0] || null;
+        if (name) {
+          groups.push({ name, parent: parent === 'Primary' ? null : parent });
+        }
+      }
+    }
+
+    console.log(`[TALLY] Found ${groups.length} stock groups`);
+    return groups;
+  }
+
+  /**
+   * Read stock items from Tally with full details
+   */
+  async readStockItems(options = {}) {
+    const companyName = options.companyName || options.company;
+    const filterGroups = options.syncGroups || options.filterGroups || [];
+
+    console.log(`[TALLY] Reading stock items for company: ${companyName || 'default'}`);
+
+    const xml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>StockItemList</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              ${companyName ? `<SVCURRENTCOMPANY>${companyName}</SVCURRENTCOMPANY>` : ''}
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="StockItemList">
+                  <TYPE>Stock Item</TYPE>
+                  <FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, BASEUNITS, NARRATION, MAILINGNAME, LASTMODIFIEDDATE, DESCRIPTION, GUID</FETCH>
+                </COLLECTION>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>
+    `;
+
+    const response = await this.sendRequest(xml);
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(response);
+
+    const items = [];
+    const collection = result?.ENVELOPE?.BODY?.[0]?.DATA?.[0]?.COLLECTION?.[0];
+    if (collection && collection.STOCKITEM) {
+      for (const xmlItem of collection.STOCKITEM) {
+        try {
+          const item = this._parseStockItem(xmlItem);
+          if (item) {
+            if (filterGroups.length === 0 || filterGroups.includes(item.parent)) {
+              items.push(item);
+            }
+          }
+        } catch (err) {
+          console.warn('[TALLY] Skipping malformed stock item:', err.message);
+        }
+      }
+    }
+
+    console.log(`[TALLY] Read ${items.length} stock items`);
+    return items;
+  }
+
+  /**
+   * Read stock items changed since a given date (delta sync)
+   */
+  async readChangedStockItems(companyName, sinceDate) {
+    const formattedDate = this.formatDate(sinceDate);
+    console.log(`[TALLY] Reading changed stock items since ${formattedDate} for ${companyName}`);
+
+    const xml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>ChangedStockItems</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${companyName}</SVCURRENTCOMPANY>
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="ChangedStockItems">
+                  <TYPE>Stock Item</TYPE>
+                  <FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, BASEUNITS, NARRATION, MAILINGNAME, LASTMODIFIEDDATE, DESCRIPTION, GUID</FETCH>
+                  <FILTER>ModifiedFilter</FILTER>
+                </COLLECTION>
+                <SYSTEM TYPE="Formulae" NAME="ModifiedFilter">$$LASTMODIFIEDDATE > $$Date:"${formattedDate}"</SYSTEM>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>
+    `;
+
+    const response = await this.sendRequest(xml);
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(response);
+
+    const items = [];
+    const collection = result?.ENVELOPE?.BODY?.[0]?.DATA?.[0]?.COLLECTION?.[0];
+    if (collection && collection.STOCKITEM) {
+      for (const xmlItem of collection.STOCKITEM) {
+        try {
+          const item = this._parseStockItem(xmlItem);
+          if (item) items.push(item);
+        } catch (err) {
+          console.warn('[TALLY] Skipping malformed changed stock item:', err.message);
+        }
+      }
+    }
+
+    console.log(`[TALLY] Found ${items.length} changed stock items`);
+    return items;
+  }
+
+  /**
+   * Read a single stock item by name
+   */
+  async readSingleStockItem(companyName, itemName) {
+    console.log(`[TALLY] Reading stock item: ${itemName}`);
+
+    const xml = `
+      <ENVELOPE>
+        <HEADER>
+          <VERSION>1</VERSION>
+          <TALLYREQUEST>Export</TALLYREQUEST>
+          <TYPE>Collection</TYPE>
+          <ID>SingleStockItem</ID>
+        </HEADER>
+        <BODY>
+          <DESC>
+            <STATICVARIABLES>
+              <SVCURRENTCOMPANY>${companyName}</SVCURRENTCOMPANY>
+            </STATICVARIABLES>
+            <TDL>
+              <TDLMESSAGE>
+                <COLLECTION NAME="SingleStockItem">
+                  <TYPE>Stock Item</TYPE>
+                  <FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, BASEUNITS, NARRATION, MAILINGNAME, LASTMODIFIEDDATE, DESCRIPTION, GUID</FETCH>
+                  <FILTER>NameFilter</FILTER>
+                </COLLECTION>
+                <SYSTEM TYPE="Formulae" NAME="NameFilter">$NAME = "${itemName}"</SYSTEM>
+              </TDLMESSAGE>
+            </TDL>
+          </DESC>
+        </BODY>
+      </ENVELOPE>
+    `;
+
+    const response = await this.sendRequest(xml);
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(response);
+
+    const collection = result?.ENVELOPE?.BODY?.[0]?.DATA?.[0]?.COLLECTION?.[0];
+    if (collection && collection.STOCKITEM && collection.STOCKITEM.length > 0) {
+      return this._parseStockItem(collection.STOCKITEM[0]);
+    }
+
+    return null;
+  }
+
+  /**
+   * Parse a single stock item XML element into a normalized object
+   */
+  _parseStockItem(xmlItem) {
+    const name = xmlItem.NAME?.[0] || xmlItem.$.NAME;
+    if (!name) return null;
+
+    const closingBalance = xmlItem.CLOSINGBALANCE?.[0] || '';
+    const closingRate = xmlItem.CLOSINGRATE?.[0] || '';
+    const { quantity, unit } = this._parseQuantity(closingBalance);
+
+    return {
+      name,
+      parent: xmlItem.PARENT?.[0] || null,
+      closingBalance: quantity,
+      rate: this._parseRate(closingRate),
+      baseUnits: unit || xmlItem.BASEUNITS?.[0] || null,
+      description: xmlItem.DESCRIPTION?.[0] || xmlItem.NARRATION?.[0] || null,
+      alias: xmlItem.MAILINGNAME?.[0] || null,
+      lastModifiedDate: xmlItem.LASTMODIFIEDDATE?.[0] || null,
+      guid: xmlItem.GUID?.[0] || null
+    };
+  }
+
+  /**
+   * Parse quantity string like "150.00 Nos" into { quantity, unit }
+   */
+  _parseQuantity(balanceStr) {
+    if (!balanceStr || balanceStr === '' || balanceStr === '0') {
+      return { quantity: 0, unit: null };
+    }
+
+    const str = String(balanceStr).trim();
+    const match = str.match(/^(-?[\d,]+\.?\d*)\s*(.*)$/);
+    if (match) {
+      return {
+        quantity: parseFloat(match[1].replace(/,/g, '')) || 0,
+        unit: match[2].trim() || null
+      };
+    }
+
+    const num = parseFloat(str.replace(/,/g, ''));
+    return { quantity: isNaN(num) ? 0 : num, unit: null };
+  }
+
+  /**
+   * Parse rate string, handling Tally's various rate formats
+   */
+  _parseRate(rateStr) {
+    if (!rateStr || rateStr === '' || rateStr === '0') return 0;
+
+    const str = String(rateStr).trim();
+    // Handle formats like "150.00/Nos", "₹ 150.00", "150.00"
+    const cleaned = str.replace(/[₹$,\/\w\s]+$/g, '').replace(/[₹$\s]/g, '');
+    const match = cleaned.match(/-?[\d.]+/);
+    return match ? parseFloat(match[0]) || 0 : 0;
   }
 
   /**
