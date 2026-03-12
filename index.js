@@ -27,6 +27,13 @@ let tray = null;
 let settingsWindow = null;
 let trayPopupWindow = null;
 let partnerConnectWindow = null;
+
+// Window icon for Windows/Linux (macOS uses app icon automatically)
+function getWindowIcon() {
+  if (process.platform === 'win32') return path.join(__dirname, 'assets', 'icon.ico');
+  if (process.platform === 'linux') return path.join(__dirname, 'assets', 'icon.png');
+  return undefined;
+}
 let agentStatus = {
   registered: false,
   polling: false,
@@ -167,6 +174,14 @@ app.whenReady().then(async () => {
   // Set job router and module manager for polling service
   pollingService.setJobRouter(jobRouter);
   pollingService.setModuleManager(moduleManager);
+
+  // Set dock icon on macOS (dev mode shows Electron icon otherwise)
+  if (process.platform === 'darwin' && app.dock) {
+    const dockIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon);
+    }
+  }
 
   // Create system tray
   createTray();
@@ -464,6 +479,7 @@ function openSettings(page = 'tally-integration') {
     title: 'BytePhase Agent - Settings',
     resizable: true,
     backgroundColor: '#0f0f1a',
+    icon: getWindowIcon(),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -567,6 +583,7 @@ function openPartnerConnectWindow(connectData) {
     center: true,
     backgroundColor: '#0f0f1a',
     title: 'Partner Connection - BytePhase Agent',
+    icon: getWindowIcon(),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -593,6 +610,7 @@ function openDirectoryScanWindow(scanData) {
     height: 800,
     title: 'Directory Scan - BytePhase Agent',
     resizable: false,
+    icon: getWindowIcon(),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -793,6 +811,16 @@ ipcMain.handle('get-agent-info', () => {
     moduleStats: moduleManager.getCount(),
     jobStats: jobRouter.getStats()
   };
+});
+
+// Open logs folder
+ipcMain.handle('open-logs-folder', () => {
+  const logsPath = path.join(app.getPath('userData'), 'logs');
+  // Ensure logs directory exists
+  if (!fs.existsSync(logsPath)) {
+    fs.mkdirSync(logsPath, { recursive: true });
+  }
+  require('electron').shell.openPath(logsPath);
 });
 
 // Quick setup with API key
