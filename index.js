@@ -226,6 +226,31 @@ app.whenReady().then(async () => {
     }, 1000);
   }
 
+  // Forward sync progress events to UI windows
+  eventBus.subscribe('tally:sync:progress', (progress) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('tally-sync-progress', progress);
+    }
+    if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+      trayPopupWindow.webContents.send('tally-sync-progress', progress);
+    }
+  });
+
+  eventBus.subscribe('tally:sync:complete', (data) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('tally-sync-complete', data);
+    }
+    if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+      trayPopupWindow.webContents.send('tally-sync-complete', data);
+    }
+  });
+
+  eventBus.subscribe('tally:sync:error', (data) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('tally-sync-error', data);
+    }
+  });
+
   // Start status update loop
   startStatusUpdates();
 
@@ -784,13 +809,14 @@ ipcMain.on('open-settings-from-tray', (event, page) => {
 });
 
 // Trigger immediate Tally sync from tray popup
-ipcMain.handle('trigger-tally-sync', async () => {
+ipcMain.handle('trigger-tally-sync', async (event, syncType) => {
   try {
-    if (pollingService.isRunning) {
-      await pollingService.poll();
-      return { success: true };
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.scheduler) {
+      return { success: false, error: 'Tally module not available' };
     }
-    return { success: false, error: 'Polling not running' };
+    const result = await tallyModule.scheduler.triggerImmediateSync(syncType || 'delta');
+    return result;
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -1124,6 +1150,72 @@ ipcMain.handle('get-tally-sync-stats', () => {
     success: true,
     syncStats: tallyModule.syncStats || { lastSyncTime: null, totalItemsSynced: 0, syncHistory: [] }
   };
+});
+
+// List all open companies in Tally
+ipcMain.handle('list-tally-companies', async () => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.tallyService) {
+      return { success: false, error: 'Tally module not available' };
+    }
+    const companies = await tallyModule.tallyService.listCompanies();
+    return { success: true, companies };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// List stock groups for a company
+ipcMain.handle('list-tally-stock-groups', async (event, companyName) => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.tallyService) {
+      return { success: false, error: 'Tally module not available' };
+    }
+    const groups = await tallyModule.tallyService.listStockGroups(companyName);
+    return { success: true, groups };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Save Tally sync configuration
+ipcMain.handle('save-tally-sync-config', async (event, syncConfig) => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule) {
+      return { success: false, error: 'Tally module not found' };
+    }
+
+    // Merge sync config into module config
+    Object.assign(tallyModule.config, syncConfig);
+
+    // Update sync service config
+    if (tallyModule.syncService) {
+      Object.assign(tallyModule.syncService.config, syncConfig);
+    }
+
+    // Update scheduler config
+    if (tallyModule.scheduler) {
+      tallyModule.scheduler.updateConfig(syncConfig);
+
+      // Start scheduler if company is newly selected
+      if (syncConfig.selectedCompany && !tallyModule.scheduler._running) {
+        tallyModule.scheduler.start();
+      }
+    }
+
+    // Persist to agent.config.json
+    const configPath = path.join(__dirname, 'config', 'agent.config.json');
+    const agentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    agentConfig.modules.tally.config = { ...agentConfig.modules.tally.config, ...syncConfig };
+    fs.writeFileSync(configPath, JSON.stringify(agentConfig, null, 2));
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 // Directory scan - select directory
