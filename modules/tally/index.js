@@ -4,12 +4,16 @@
  * Handles all Tally-related operations:
  * - Vouchers (create, read)
  * - Ledgers (create, read)
- * - Stock items (create, read)
+ * - Stock items (create, read, sync)
  * - Reports (generate)
+ * - Inventory sync to cloud platform
  */
 
 const BaseModule = require('../../core/base-module');
 const TallyService = require('./tally.service');
+const TallySyncService = require('./sync.service');
+const SyncScheduler = require('./sync-scheduler');
+const queueService = require('../../services/queue.service');
 
 class TallyModule extends BaseModule {
   constructor() {
@@ -24,16 +28,50 @@ class TallyModule extends BaseModule {
       tallyPort: 9000,
       tallyCompany: null,
       autoDetectVersion: true,
-      timeout: 10000
+      timeout: 10000,
+      // Sync config
+      selectedCompany: null,
+      syncGroups: [],
+      excludedItems: [],
+      syncIntervalMinutes: 30,
+      offHoursIntervalMinutes: 120,
+      offHoursStart: '20:00',
+      offHoursEnd: '09:00',
+      fullSyncTime: '02:00',
+      dryRun: true
     };
 
     this.tallyService = null;
+    this.syncService = null;
+    this.scheduler = null;
+  }
 
-    // Sync statistics (in-memory, reset on restart)
-    this.syncStats = {
-      lastSyncTime: null,
-      totalItemsSynced: 0,
-      syncHistory: []  // { timestamp, status, itemCount, error, duration }
+  /**
+   * Sync stats backed by SQLite state
+   */
+  get syncStats() {
+    const status = this.syncService ? this.syncService.getStatus() : {};
+    const history = queueService.getSyncHistory ? queueService.getSyncHistory(10) : [];
+
+    return {
+      lastSyncTime: status.lastDeltaSyncAt || status.lastFullSyncAt || null,
+      lastDeltaSyncTime: status.lastDeltaSyncAt || null,
+      lastFullSyncTime: status.lastFullSyncAt || null,
+      totalItemsSynced: history.length > 0 ? history[0].items_synced || 0 : 0,
+      syncStatus: status.syncStatus || 'idle',
+      consecutiveFailures: status.consecutiveFailures || 0,
+      isSyncing: status.isSyncing || false,
+      syncHistory: history.map(s => ({
+        id: s.id,
+        timestamp: s.started_at,
+        completedAt: s.completed_at,
+        status: s.status,
+        syncType: s.sync_type,
+        itemCount: s.total_items,
+        itemsSynced: s.items_synced,
+        error: s.error,
+        duration: s.completed_at ? s.completed_at - s.started_at : null
+      }))
     };
   }
 
@@ -44,6 +82,12 @@ class TallyModule extends BaseModule {
 
     // Create Tally service instance with config
     this.tallyService = new TallyService(this.config);
+
+    // Create sync service
+    this.syncService = new TallySyncService(this.tallyService, this.config);
+
+    // Create scheduler
+    this.scheduler = new SyncScheduler(this.syncService, this.config);
 
     this.initialized = true;
   }
@@ -69,11 +113,33 @@ class TallyModule extends BaseModule {
       console.warn('[TALLY] Could not connect to Tally:', error.message);
     }
 
+    // Resume any incomplete sync sessions
+    try {
+      await this.syncService.resumeIncompleteSession();
+    } catch (error) {
+      console.warn('[TALLY] Error resuming sync sessions:', error.message);
+    }
+
+    // Start scheduler if a company is selected
+    if (this.config.selectedCompany) {
+      this.scheduler.start();
+    }
+
     this.active = true;
   }
 
   async deactivate() {
     await super.deactivate();
+
+    // Stop scheduler
+    if (this.scheduler) {
+      this.scheduler.stop();
+    }
+
+    // Cancel running sync
+    if (this.syncService) {
+      this.syncService.abort();
+    }
 
     console.log('[TALLY] Tally module deactivated');
     this.active = false;
@@ -134,6 +200,32 @@ class TallyModule extends BaseModule {
       case 'report.generate':
         return await this.tallyService.generateReport(job.payload);
 
+      case 'company.detect':
+        return await this.tallyService.listCompanies();
+
+      case 'groups.fetch':
+        return await this.tallyService.listStockGroups(
+          job.payload?.companyName || this.config.selectedCompany
+        );
+
+      case 'stock.sync.delta':
+        return await this.syncService.executeDeltaSync(
+          job.payload?.companyName || this.config.selectedCompany,
+          job.payload?.syncGroups || this.config.syncGroups
+        );
+
+      case 'stock.sync.full':
+        return await this.syncService.executeFullSync(
+          job.payload?.companyName || this.config.selectedCompany,
+          job.payload?.syncGroups || this.config.syncGroups
+        );
+
+      case 'stock.sync.partial':
+        return await this.syncService.executePartialSync(
+          job.payload?.companyName || this.config.selectedCompany,
+          job.payload?.itemNames || []
+        );
+
       default:
         throw new Error(`Unknown Tally job type: ${normalizedType}`);
     }
@@ -172,6 +264,55 @@ class TallyModule extends BaseModule {
         min: 1000,
         max: 60000,
         description: 'Request timeout in milliseconds'
+      },
+      selectedCompany: {
+        type: 'string',
+        default: null,
+        description: 'Selected Tally company for inventory sync'
+      },
+      syncGroups: {
+        type: 'array',
+        default: [],
+        description: 'Stock groups to sync (empty = all groups)'
+      },
+      excludedItems: {
+        type: 'array',
+        default: [],
+        description: 'Stock item names to exclude from sync'
+      },
+      syncIntervalMinutes: {
+        type: 'number',
+        default: 30,
+        min: 5,
+        max: 1440,
+        description: 'Delta sync interval during business hours (minutes)'
+      },
+      offHoursIntervalMinutes: {
+        type: 'number',
+        default: 120,
+        min: 30,
+        max: 1440,
+        description: 'Delta sync interval during off-hours (minutes)'
+      },
+      offHoursStart: {
+        type: 'string',
+        default: '20:00',
+        description: 'Off-hours start time (HH:MM)'
+      },
+      offHoursEnd: {
+        type: 'string',
+        default: '09:00',
+        description: 'Off-hours end time (HH:MM)'
+      },
+      fullSyncTime: {
+        type: 'string',
+        default: '02:00',
+        description: 'Daily full sync time (HH:MM)'
+      },
+      dryRun: {
+        type: 'boolean',
+        default: true,
+        description: 'Dry run mode — read from Tally but skip uploads'
       }
     };
   }
@@ -198,6 +339,11 @@ class TallyModule extends BaseModule {
       'tally.ledger.read',
       'tally.stock.create',
       'tally.stock.read',
+      'tally.stock.sync.delta',
+      'tally.stock.sync.full',
+      'tally.stock.sync.partial',
+      'tally.company.detect',
+      'tally.groups.fetch',
       'tally.report.generate',
       // Backward compatibility
       'voucher.create',

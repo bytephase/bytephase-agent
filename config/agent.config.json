@@ -16,7 +16,16 @@
         "tallyPort": 9000,
         "tallyCompany": null,
         "autoDetectVersion": true,
-        "timeout": 10000
+        "timeout": 10000,
+        "selectedCompany": null,
+        "syncGroups": [],
+        "excludedItems": [],
+        "syncIntervalMinutes": 30,
+        "offHoursIntervalMinutes": 120,
+        "offHoursStart": "20:00",
+        "offHoursEnd": "09:00",
+        "fullSyncTime": "02:00",
+        "dryRun": true
       }
     },
     "directory-scanner": {
