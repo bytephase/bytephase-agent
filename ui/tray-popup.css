@@ -229,6 +229,48 @@ body {
   fill: currentColor;
 }
 
+/* Sync progress indicator */
+.tray-sync-progress {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 8px;
+}
+
+.tray-sync-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.tray-sync-progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #3b82f6;
+}
+
+.tray-sync-progress-count {
+  font-size: 11px;
+  color: #6b6b80;
+}
+
+.tray-sync-progress-bar-bg {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tray-sync-progress-bar {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
 .popup-version {
   text-align: center;
   font-size: 10px;

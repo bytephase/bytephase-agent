@@ -3,6 +3,34 @@ const { ipcRenderer } = require('electron');
 // Load data on startup
 document.addEventListener('DOMContentLoaded', () => {
   loadPopupData();
+
+  // Listen for sync progress
+  ipcRenderer.on('tally-sync-progress', (event, progress) => {
+    const el = document.getElementById('traySyncProgress');
+    if (!el) return;
+
+    el.style.display = 'block';
+
+    const percent = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+
+    const label = document.getElementById('traySyncLabel');
+    if (label) label.textContent = progress.message || 'Syncing...';
+
+    const count = document.getElementById('traySyncCount');
+    if (count) count.textContent = `${progress.current || 0} / ${progress.total || 0}`;
+
+    const bar = document.getElementById('traySyncBar');
+    if (bar) bar.style.width = `${percent}%`;
+  });
+
+  // Hide progress on sync complete
+  ipcRenderer.on('tally-sync-complete', () => {
+    const el = document.getElementById('traySyncProgress');
+    if (el) el.style.display = 'none';
+
+    // Refresh data
+    loadPopupData();
+  });
 });
 
 async function loadPopupData() {
@@ -90,13 +118,17 @@ async function triggerSync() {
   btn.style.pointerEvents = 'none';
 
   try {
-    await ipcRenderer.invoke('trigger-tally-sync');
+    await ipcRenderer.invoke('trigger-tally-sync', 'delta');
   } catch (error) {
     console.error('[TRAY-POPUP] Sync trigger failed:', error);
   }
 
-  // Close popup after triggering
-  setTimeout(() => window.close(), 500);
+  // Re-enable button after sync starts
+  setTimeout(() => {
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg> Sync Now';
+    btn.style.opacity = '1';
+    btn.style.pointerEvents = 'auto';
+  }, 3000);
 }
 
 function openSettings(page) {
