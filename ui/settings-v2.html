@@ -10,11 +10,9 @@
   <!-- Sidebar -->
   <div class="sidebar">
     <div class="sidebar-header">
-      <img src="../assets/bytephase-logo.png" class="sidebar-logo" onerror="this.style.display='none'">
-      <div class="sidebar-title">
-        <h2>BytePhase<br>Agent</h2>
-        <p>Settings</p>
-      </div>
+      <img src="../assets/bytephase-logo.png" class="sidebar-logo" onerror="this.style.display='none'; document.getElementById('sidebarFallbackTitle').style.display='block'">
+      <p class="sidebar-agent-label">Agent</p>
+      <h2 id="sidebarFallbackTitle" class="sidebar-fallback-title" style="display:none;">BytePhase Agent</h2>
     </div>
 
     <nav class="sidebar-nav">
@@ -29,6 +27,10 @@
       <div class="nav-item" data-page="overview" onclick="navigateTo('overview')">
         <svg viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
         <span>Overview</span>
+      </div>
+      <div class="nav-item" data-page="logs" onclick="navigateTo('logs')">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        <span>Logs</span>
       </div>
     </nav>
 
@@ -215,6 +217,28 @@
             <div class="stat-card-label">Queue Pending</div>
             <div class="stat-card-value" id="queuePendingValue">0</div>
           </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ========== LOGS PAGE ========== -->
+    <div class="page" id="page-logs">
+      <h1 class="page-title">Logs</h1>
+      <p class="page-subtitle">Real-time agent activity and debug output</p>
+
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="logs-toolbar">
+          <div class="logs-toolbar-left">
+            <span class="logs-count" id="logsCount">0 entries</span>
+          </div>
+          <div class="logs-toolbar-right">
+            <button class="btn btn-sm btn-secondary" onclick="clearLogs()">Clear</button>
+            <button class="btn btn-sm btn-secondary" onclick="viewLogs()">Open Folder</button>
+          </div>
+        </div>
+        <div class="logs-container" id="logsContainer">
+          <p class="logs-placeholder">Logs will appear here...</p>
         </div>
       </div>
     </div>

@@ -17,6 +17,7 @@ function navigateTo(page) {
   if (page === 'overview') loadOverviewData();
   if (page === 'tally-integration') loadTallyData();
   if (page === 'system-tray') loadSystemTrayData();
+  if (page === 'logs') loadLogs();
 }
 
 function switchSubTab(tab) {
@@ -351,6 +352,87 @@ async function loadSystemTrayData() {
     console.error('[SETTINGS] Failed to load system tray data:', error);
   }
 }
+
+// ============ LOGS ============
+
+async function loadLogs() {
+  try {
+    const logs = await ipcRenderer.invoke('get-logs');
+    const container = document.getElementById('logsContainer');
+    container.innerHTML = '';
+
+    if (logs.length === 0) {
+      container.innerHTML = '<p class="logs-placeholder">No logs yet...</p>';
+      updateLogsCount(0);
+      return;
+    }
+
+    logs.forEach(log => appendLogEntry(log));
+    updateLogsCount(logs.length);
+    container.scrollTop = container.scrollHeight;
+  } catch (error) {
+    console.error('[SETTINGS] Failed to load logs:', error);
+  }
+}
+
+function appendLogEntry(log) {
+  const container = document.getElementById('logsContainer');
+
+  // Remove placeholder if present
+  const placeholder = container.querySelector('.logs-placeholder');
+  if (placeholder) placeholder.remove();
+
+  const entry = document.createElement('div');
+  entry.className = `log-entry log-${log.level}`;
+
+  const time = new Date(log.timestamp).toLocaleTimeString();
+
+  entry.innerHTML = `
+    <span class="log-time">${time}</span>
+    <span class="log-level">[${log.level.toUpperCase()}]</span>
+    <span class="log-message">${escapeHtml(log.message)}</span>
+  `;
+
+  container.appendChild(entry);
+
+  // Auto-scroll if near bottom
+  const nearBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 100;
+  if (nearBottom) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function clearLogs() {
+  const container = document.getElementById('logsContainer');
+  container.innerHTML = '<p class="logs-placeholder">Logs cleared</p>';
+  updateLogsCount(0);
+}
+
+function updateLogsCount(count) {
+  const el = document.getElementById('logsCount');
+  if (el) el.textContent = `${count} ${count === 1 ? 'entry' : 'entries'}`;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function viewLogs() {
+  ipcRenderer.invoke('open-logs-folder');
+}
+
+// Listen for real-time log entries
+ipcRenderer.on('log-entry', (event, log) => {
+  const logsPage = document.getElementById('page-logs');
+  if (logsPage && logsPage.classList.contains('active')) {
+    appendLogEntry(log);
+    const container = document.getElementById('logsContainer');
+    const count = container.querySelectorAll('.log-entry').length;
+    updateLogsCount(count);
+  }
+});
 
 // Setup toggle
 function toggleSetup(mode) {

@@ -106,3 +106,7 @@ function openSettings(page) {
 function openPartnerPortal() {
   require('electron').shell.openExternal('https://partner.bytephase.com');
 }
+
+async function viewLogs() {
+  await ipcRenderer.invoke('open-logs-folder');
+}
