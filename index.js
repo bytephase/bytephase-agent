@@ -1246,7 +1246,7 @@ ipcMain.on('notify-agent-connected', async (event, data) => {
 
   try {
     const axios = require('axios');
-    const url = `${data.cloudUrl}/api/directory-scans/${data.jobId}/progress`;
+    const url = `${data.cloudUrl}/api/agent/directory-scans/${data.jobId}/progress`;
     console.log('[APP] Sending notification to:', url);
 
     const response = await axios.post(
@@ -1263,6 +1263,7 @@ ipcMain.on('notify-agent-connected', async (event, data) => {
       {
         headers: {
           'X-Agent-API-Key': data.apiKey,
+          'X-Tenant': data.shopId ? data.shopId.toString() : '',
           'Content-Type': 'application/json'
         },
         timeout: 10000
