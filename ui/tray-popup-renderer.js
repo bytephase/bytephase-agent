@@ -91,9 +91,12 @@ function updateUI(data) {
 
   // Sync Now button state
   const syncBtn = document.getElementById('syncNowBtn');
-  if (!data.registered || !data.tallyStatus || !data.tallyStatus.connected) {
+  if (!data.tallyStatus || !data.tallyStatus.connected) {
     syncBtn.style.opacity = '0.5';
     syncBtn.style.pointerEvents = 'none';
+  } else {
+    syncBtn.style.opacity = '1';
+    syncBtn.style.pointerEvents = 'auto';
   }
 
   // Version
