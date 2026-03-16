@@ -533,8 +533,8 @@ class TallyService {
     if (!rateStr || rateStr === '' || rateStr === '0') return 0;
 
     const str = String(rateStr).trim();
-    // Handle formats like "150.00/Nos", "₹ 150.00", "150.00"
-    const cleaned = str.replace(/[₹$,\/\w\s]+$/g, '').replace(/[₹$\s]/g, '');
+    // Handle formats like "150.00/Nos", "₹ 150.00", "₹ 1,200.50/Nos"
+    const cleaned = str.replace(/[₹$\s,]/g, '');
     const match = cleaned.match(/-?[\d.]+/);
     return match ? parseFloat(match[0]) || 0 : 0;
   }
