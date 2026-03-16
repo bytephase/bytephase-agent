@@ -96,9 +96,11 @@ bytephase-agent/
 │   └── event-bus.js                     # Inter-module pub/sub event system
 │
 ├── modules/                              # Module implementations
-│   ├── tally/                           # Tally ERP integration
+│   ├── tally/                           # Tally ERP integration + sync engine
 │   │   ├── index.js                    # Module class
-│   │   └── tally.service.js            # Tally XML API operations
+│   │   ├── tally.service.js            # Tally XML API operations
+│   │   ├── sync.service.js             # Sync engine (delta/full/partial, chunking, retry)
+│   │   └── sync-scheduler.js           # Scheduled sync (business/off-hours, daily full)
 │   │
 │   └── directory-scanner/               # Directory scanning & upload
 │       ├── index.js                    # Module class
@@ -118,11 +120,16 @@ bytephase-agent/
 │   ├── protocol-registration.helper.js  # bytephase:// protocol setup
 │   └── notification.helper.js           # Desktop notifications
 │
-├── ui/                                   # User interface
-│   ├── settings.html                    # Main settings window
+├── ui/                                   # User interface (dark theme)
+│   ├── settings-v2.html                 # Settings window (sidebar nav, tabs)
+│   ├── settings-v2-renderer.js          # Settings logic (Tally config, sync, groups)
+│   ├── settings-v2.css                  # Settings styling
+│   ├── tray-popup.html                  # Custom tray popup (frameless window)
+│   ├── tray-popup-renderer.js           # Tray popup logic (sync status, quick actions)
+│   ├── tray-popup.css                   # Tray popup styling
+│   ├── partner-connect.html             # Partner connection approval UI
 │   ├── directory-scan.html              # Directory scanner UI
-│   ├── renderer.js                      # UI logic & IPC handlers
-│   └── styles.css                       # Styling
+│   └── renderer.js                      # Legacy UI logic
 │
 ├── config/                               # Configuration files
 │   ├── agent.config.json                # Module configuration
@@ -135,6 +142,9 @@ bytephase-agent/
 │
 ├── assets/                               # App icons & images
 ├── scripts/                              # Testing & utility scripts
+│   ├── mock-tally-server.js             # Mock Tally XML API (for macOS/Linux testing)
+│   ├── generate-test-token.js           # Generate test deep link tokens
+│   └── test-directory-scanner.js        # Directory scanner test script
 ├── docs/                                 # Architecture documentation
 └── dist/                                 # Built packages (dmg, exe, AppImage)
 ```
@@ -290,19 +300,33 @@ Validates HMAC-signed tokens from deep links.
 
 ### Tally Module (`modules/tally/`)
 
-Integrates with **Tally ERP** accounting software via its local XML API.
+Integrates with **Tally ERP** accounting software via its local XML API. Includes a full inventory sync engine for the Trusted Part Supplier Platform.
 
 **Supported job types:**
 
-| Job Type               | Description                       | Status      |
-| ---------------------- | --------------------------------- | ----------- |
-| `tally.voucher.create` | Create sales/purchase vouchers    | Implemented |
-| `tally.voucher.read`   | Read voucher details              | Stub        |
-| `tally.ledger.create`  | Create ledger accounts            | Stub        |
-| `tally.ledger.read`    | Fetch ledger list                 | Stub        |
-| `tally.stock.create`   | Create stock items                | Stub        |
-| `tally.stock.read`     | Fetch stock items                 | Stub        |
-| `tally.report.generate`| Generate financial reports        | Stub        |
+| Job Type                  | Description                          | Status      |
+| ------------------------- | ------------------------------------ | ----------- |
+| `tally.voucher.create`    | Create sales/purchase vouchers       | Implemented |
+| `tally.voucher.read`      | Read voucher details                 | Stub        |
+| `tally.ledger.create`     | Create ledger accounts               | Stub        |
+| `tally.ledger.read`       | Fetch ledger list                    | Stub        |
+| `tally.stock.create`      | Create stock items                   | Stub        |
+| `tally.stock.read`        | Fetch stock items with full details  | Implemented |
+| `tally.stock.sync.delta`  | Sync only changed items since last sync | Implemented (dry-run) |
+| `tally.stock.sync.full`   | Full inventory sync of all items     | Implemented (dry-run) |
+| `tally.stock.sync.partial`| Refresh specific items by name       | Implemented (dry-run) |
+| `tally.company.detect`    | List open companies in Tally         | Implemented |
+| `tally.groups.fetch`      | List stock groups with hierarchy     | Implemented |
+| `tally.report.generate`   | Generate financial reports           | Stub        |
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `index.js` | Module class — lifecycle, job routing, sync orchestration |
+| `tally.service.js` | XML API communication — stock reads, company listing, group listing |
+| `sync.service.js` | Sync engine — delta/full/partial sync, chunking (500/chunk), retry (3x), dry-run mode |
+| `sync-scheduler.js` | Scheduler — business hours (30min), off-hours (120min), daily full sync at 02:00 |
 
 **Configuration:**
 ```json
@@ -311,7 +335,16 @@ Integrates with **Tally ERP** accounting software via its local XML API.
   "tallyPort": 9000,
   "tallyCompany": null,
   "autoDetectVersion": true,
-  "timeout": 10000
+  "timeout": 10000,
+  "selectedCompany": null,
+  "syncGroups": [],
+  "excludedItems": [],
+  "syncIntervalMinutes": 30,
+  "offHoursIntervalMinutes": 120,
+  "offHoursStart": "20:00",
+  "offHoursEnd": "09:00",
+  "fullSyncTime": "02:00",
+  "dryRun": true
 }
 ```
 
@@ -320,6 +353,14 @@ Integrates with **Tally ERP** accounting software via its local XML API.
 - Auto-detects Tally version (ERP9, Prime, PrimeServer)
 - Auto-detects active company name
 - Builds XML request bodies and parses XML responses using `xml2js`
+- **Sync engine** reads stock items from Tally, chunks them (500/chunk), and uploads to cloud platform
+- **Delta sync** uses Tally's `LASTMODIFIEDDATE` to fetch only changed items
+- **Dry-run mode** (default) reads from Tally but skips uploads — safe for testing without backend
+- **SQLite state machine** tracks sync sessions, chunks, and last sync timestamps for crash recovery
+
+**Testing:**
+- Mock Tally server available at `scripts/mock-tally-server.js` for macOS/Linux testing
+- Tested with mock server on 2026-03-16: all sync flows verified (see `docs/session-2026-03-16.md`)
 
 ### Directory Scanner Module (`modules/directory-scanner/`)
 
