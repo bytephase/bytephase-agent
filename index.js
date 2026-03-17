@@ -28,6 +28,34 @@ let settingsWindow = null;
 let trayPopupWindow = null;
 let partnerConnectWindow = null;
 
+/**
+ * Get writable path for agent.config.json.
+ * In packaged builds, __dirname is inside app.asar (read-only).
+ * We copy the bundled config to userData on first run and use that copy.
+ */
+function getConfigPath() {
+  const bundledPath = path.join(__dirname, 'config', 'agent.config.json');
+
+  if (!app.isPackaged) {
+    return bundledPath;
+  }
+
+  const userDataConfigDir = path.join(app.getPath('userData'), 'config');
+  const userDataConfigPath = path.join(userDataConfigDir, 'agent.config.json');
+
+  // Copy bundled config to userData on first run
+  if (!fs.existsSync(userDataConfigPath)) {
+    if (!fs.existsSync(userDataConfigDir)) {
+      fs.mkdirSync(userDataConfigDir, { recursive: true });
+    }
+    if (fs.existsSync(bundledPath)) {
+      fs.copyFileSync(bundledPath, userDataConfigPath);
+    }
+  }
+
+  return userDataConfigPath;
+}
+
 // Window icon for Windows/Linux (macOS uses app icon automatically)
 function getWindowIcon() {
   if (process.platform === 'win32') return path.join(__dirname, 'assets', 'icon.ico');
@@ -279,7 +307,7 @@ async function initializeModules() {
     await moduleManager.loadAll();
 
     // Load configuration
-    const configPath = path.join(__dirname, 'config', 'agent.config.json');
+    const configPath = getConfigPath();
     let config = {};
 
     if (fs.existsSync(configPath)) {
@@ -875,7 +903,7 @@ ipcMain.handle('connect-with-api-key', async (event, apiKey) => {
     if (result.modules && Object.keys(result.modules).length > 0) {
       console.log('[APP] Configuring modules from cloud...');
 
-      const configPath = path.join(__dirname, 'config', 'agent.config.json');
+      const configPath = getConfigPath();
       let config = {};
 
       if (fs.existsSync(configPath)) {
@@ -1112,7 +1140,7 @@ ipcMain.handle('save-tally-config', async (event, config) => {
     }
 
     // Persist to agent.config.json
-    const configPath = path.join(__dirname, 'config', 'agent.config.json');
+    const configPath = getConfigPath();
     const agentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     agentConfig.modules.tally.config = { ...agentConfig.modules.tally.config, ...config };
     fs.writeFileSync(configPath, JSON.stringify(agentConfig, null, 2));
@@ -1207,7 +1235,7 @@ ipcMain.handle('save-tally-sync-config', async (event, syncConfig) => {
     }
 
     // Persist to agent.config.json
-    const configPath = path.join(__dirname, 'config', 'agent.config.json');
+    const configPath = getConfigPath();
     const agentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     agentConfig.modules.tally.config = { ...agentConfig.modules.tally.config, ...syncConfig };
     fs.writeFileSync(configPath, JSON.stringify(agentConfig, null, 2));
