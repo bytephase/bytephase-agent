@@ -354,13 +354,16 @@ Integrates with **Tally ERP** accounting software via its local XML API. Include
 - Auto-detects active company name
 - Builds XML request bodies and parses XML responses using `xml2js`
 - **Sync engine** reads stock items from Tally, chunks them (500/chunk), and uploads to cloud platform
-- **Delta sync** uses Tally's `LASTMODIFIEDDATE` to fetch only changed items
+- **Delta sync** uses Tally's `ALTERID` (incrementing number per modification) to fetch only changed items — date-based `LASTMODIFIEDDATE` proved unreliable (date-only, no timestamp)
+- **xml2js parsing** uses `_text()` helper to handle both plain strings and attribute objects (`{ _: "text", $: { attr: "val" } }`) returned by real Tally Prime
 - **Dry-run mode** (default) reads from Tally but skips uploads — safe for testing without backend
-- **SQLite state machine** tracks sync sessions, chunks, and last sync timestamps for crash recovery
+- **SQLite state machine** tracks sync sessions, chunks, last sync timestamps, and `last_alter_id` for crash recovery
+- **Config persistence** uses `getConfigPath()` — writes to `AppData/userData` in packaged builds (app.asar is read-only)
 
 **Testing:**
 - Mock Tally server available at `scripts/mock-tally-server.js` for macOS/Linux testing
 - Tested with mock server on 2026-03-16: all sync flows verified (see `docs/session-2026-03-16.md`)
+- Tested with real Tally Prime on 2026-03-17: remote connection via network, 5 bugs fixed (see `docs/session-2026-03-17.md`)
 
 ### Directory Scanner Module (`modules/directory-scanner/`)
 
