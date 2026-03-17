@@ -25,6 +25,43 @@ const InstanceLockHelper = require('./utils/instance-lock.helper');
 
 let tray = null;
 let settingsWindow = null;
+let trayPopupWindow = null;
+let partnerConnectWindow = null;
+
+/**
+ * Get writable path for agent.config.json.
+ * In packaged builds, __dirname is inside app.asar (read-only).
+ * We copy the bundled config to userData on first run and use that copy.
+ */
+function getConfigPath() {
+  const bundledPath = path.join(__dirname, 'config', 'agent.config.json');
+
+  if (!app.isPackaged) {
+    return bundledPath;
+  }
+
+  const userDataConfigDir = path.join(app.getPath('userData'), 'config');
+  const userDataConfigPath = path.join(userDataConfigDir, 'agent.config.json');
+
+  // Copy bundled config to userData on first run
+  if (!fs.existsSync(userDataConfigPath)) {
+    if (!fs.existsSync(userDataConfigDir)) {
+      fs.mkdirSync(userDataConfigDir, { recursive: true });
+    }
+    if (fs.existsSync(bundledPath)) {
+      fs.copyFileSync(bundledPath, userDataConfigPath);
+    }
+  }
+
+  return userDataConfigPath;
+}
+
+// Window icon for Windows/Linux (macOS uses app icon automatically)
+function getWindowIcon() {
+  if (process.platform === 'win32') return path.join(__dirname, 'assets', 'icon.ico');
+  if (process.platform === 'linux') return path.join(__dirname, 'assets', 'icon.png');
+  return undefined;
+}
 let agentStatus = {
   registered: false,
   polling: false,
@@ -166,6 +203,14 @@ app.whenReady().then(async () => {
   pollingService.setJobRouter(jobRouter);
   pollingService.setModuleManager(moduleManager);
 
+  // Set dock icon on macOS (dev mode shows Electron icon otherwise)
+  if (process.platform === 'darwin' && app.dock) {
+    const dockIcon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon);
+    }
+  }
+
   // Create system tray
   createTray();
 
@@ -209,6 +254,31 @@ app.whenReady().then(async () => {
     }, 1000);
   }
 
+  // Forward sync progress events to UI windows
+  eventBus.subscribe('tally:sync:progress', (progress) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('tally-sync-progress', progress);
+    }
+    if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+      trayPopupWindow.webContents.send('tally-sync-progress', progress);
+    }
+  });
+
+  eventBus.subscribe('tally:sync:complete', (data) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('tally-sync-complete', data);
+    }
+    if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+      trayPopupWindow.webContents.send('tally-sync-complete', data);
+    }
+  });
+
+  eventBus.subscribe('tally:sync:error', (data) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('tally-sync-error', data);
+    }
+  });
+
   // Start status update loop
   startStatusUpdates();
 
@@ -237,7 +307,7 @@ async function initializeModules() {
     await moduleManager.loadAll();
 
     // Load configuration
-    const configPath = path.join(__dirname, 'config', 'agent.config.json');
+    const configPath = getConfigPath();
     let config = {};
 
     if (fs.existsSync(configPath)) {
@@ -274,10 +344,18 @@ async function initializeModules() {
  * Create system tray icon and menu
  */
 function createTray() {
-  // Use platform-specific icon
-  const isWindows = process.platform === 'win32';
-  const iconName = isWindows ? 'icon.ico' : 'icon.png';
-  const iconPath = path.join(__dirname, 'assets', iconName);
+  // Use platform-specific tray icons (properly sized for each OS)
+  let iconPath;
+
+  if (process.platform === 'darwin') {
+    // macOS: Template images auto-handle dark/light mode (must be monochrome)
+    // Electron picks up @2x variant automatically for retina displays
+    iconPath = path.join(__dirname, 'assets', 'tray', 'trayTemplate.png');
+  } else if (process.platform === 'win32') {
+    iconPath = path.join(__dirname, 'assets', 'tray', 'tray-icon.ico');
+  } else {
+    iconPath = path.join(__dirname, 'assets', 'tray', 'tray-icon.png');
+  }
 
   console.log('[TRAY] Loading icon from:', iconPath);
 
@@ -286,17 +364,19 @@ function createTray() {
   try {
     trayIcon = nativeImage.createFromPath(iconPath);
     if (trayIcon.isEmpty()) {
-      console.warn('[TRAY] Icon not found or empty, using fallback');
-      // Try fallback to png
+      console.warn('[TRAY] Tray icon not found, falling back to main icon');
       const fallbackPath = path.join(__dirname, 'assets', 'icon.png');
       trayIcon = nativeImage.createFromPath(fallbackPath);
+      // Resize fallback to proper tray size
+      if (!trayIcon.isEmpty()) {
+        trayIcon = trayIcon.resize({ width: 22, height: 22 });
+      }
     }
   } catch (error) {
     console.warn('[TRAY] Error loading icon:', error.message);
     trayIcon = null;
   }
 
-  // On Windows, we need a valid icon - create a simple one if needed
   if (!trayIcon || trayIcon.isEmpty()) {
     console.warn('[TRAY] Creating empty tray icon');
     trayIcon = nativeImage.createEmpty();
@@ -305,122 +385,164 @@ function createTray() {
   tray = new Tray(trayIcon);
   tray.setToolTip('BytePhase Agent v2.0');
 
+  // Single click opens custom popup on all platforms
+  tray.on('click', (event, bounds) => {
+    toggleTrayPopup(bounds);
+  });
+
   // On Windows, double-click tray icon to open settings
-  if (isWindows) {
+  if (process.platform === 'win32') {
     tray.on('double-click', () => {
       openSettings();
     });
   }
 
-  updateTrayMenu();
-
-  console.log('[TRAY] System tray created successfully');
-}
-
-/**
- * Update tray menu with current status
- */
-function updateTrayMenu() {
-  const registered = authService.isRegistered();
-  const agentInfo = registered ? authService.getAgentInfo() : {};
-  const stats = pollingService.getStats();
-  const queueStats = queueService.getStats();
-  const moduleCounts = moduleManager.getCount();
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'BytePhase Agent v2.0',
-      enabled: false,
-      icon: nativeImage.createEmpty()
-    },
+  // Right-click shows minimal native menu (quit only)
+  const rightClickMenu = Menu.buildFromTemplate([
+    { label: 'Open Settings', click: () => openSettings() },
     { type: 'separator' },
     {
-      label: registered ? `✓ Registered (${agentInfo.shopId})` : '✗ Not Registered',
-      enabled: false
-    },
-    {
-      label: `Modules: ${moduleCounts.enabled}/${moduleCounts.total} active`,
-      enabled: false
-    },
-    {
-      label: agentStatus.polling ? '✓ Polling Active' : '✗ Polling Stopped',
-      enabled: false
-    },
-    { type: 'separator' },
-    {
-      label: `Jobs Processed: ${stats.jobsProcessed || 0}`,
-      enabled: false
-    },
-    {
-      label: `Queue: ${queueStats.pending || 0} pending`,
-      enabled: false
-    },
-    { type: 'separator' },
-    {
-      label: 'Settings',
-      click: () => openSettings()
-    },
-    {
-      label: 'Modules',
-      click: () => openSettings('modules')
-    },
-    {
-      label: registered ? 'Stop Polling' : 'Start Polling',
-      enabled: registered,
-      click: () => togglePolling()
-    },
-    {
-      label: 'View Logs',
-      click: () => {
-        const logsPath = path.join(app.getPath('userData'), 'logs');
-        require('electron').shell.openPath(logsPath);
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: async () => {
+      label: 'Quit', click: async () => {
         pollingService.stop();
-
-        // Disable all modules
         for (const moduleName of moduleManager.getEnabled()) {
           await moduleManager.disable(moduleName);
         }
-
         queueService.close();
         app.quit();
       }
     }
   ]);
+  tray.on('right-click', () => {
+    tray.popUpContextMenu(rightClickMenu);
+  });
 
-  tray.setContextMenu(contextMenu);
+  updateTrayStatus();
+
+  console.log('[TRAY] System tray created successfully');
 }
 
 /**
- * Open settings window
+ * Toggle tray popup window
  */
-function openSettings(tab = 'setup') {
-  if (settingsWindow) {
-    settingsWindow.focus();
+function toggleTrayPopup(bounds) {
+  if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+    trayPopupWindow.close();
+    trayPopupWindow = null;
     return;
   }
+  createTrayPopup(bounds);
+}
 
-  settingsWindow = new BrowserWindow({
-    width: 700,
-    height: 800,
-    title: 'BytePhase Agent - Settings',
-    resizable: true,
+/**
+ * Create custom tray popup window positioned near the tray icon
+ */
+function createTrayPopup(bounds) {
+  const popupWidth = 340;
+  const popupHeight = 440;
+
+  let x, y;
+  if (process.platform === 'darwin') {
+    // macOS: center below the tray icon
+    x = Math.round(bounds.x + bounds.width / 2 - popupWidth / 2);
+    y = Math.round(bounds.y + bounds.height + 4);
+  } else {
+    // Windows/Linux: position above the tray icon (taskbar at bottom)
+    x = Math.round(bounds.x + bounds.width / 2 - popupWidth / 2);
+    y = Math.round(bounds.y - popupHeight - 4);
+  }
+
+  trayPopupWindow = new BrowserWindow({
+    width: popupWidth,
+    height: popupHeight,
+    x: x,
+    y: y,
+    frame: false,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    transparent: true,
+    hasShadow: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
     }
   });
 
-  settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings.html'));
+  trayPopupWindow.loadFile(path.join(__dirname, 'ui', 'tray-popup.html'));
 
-  // Send initial tab when ready
+  trayPopupWindow.once('ready-to-show', () => {
+    trayPopupWindow.show();
+  });
+
+  // Close on blur (clicking outside the popup)
+  trayPopupWindow.on('blur', () => {
+    if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+      trayPopupWindow.close();
+      trayPopupWindow = null;
+    }
+  });
+
+  trayPopupWindow.on('closed', () => {
+    trayPopupWindow = null;
+  });
+}
+
+/**
+ * Update tray tooltip and push status to popup if open
+ */
+function updateTrayStatus() {
+  if (!tray) return;
+
+  const registered = authService.isRegistered();
+  const stats = pollingService.getStats();
+
+  // Update tooltip with current status
+  const status = registered
+    ? `BytePhase Agent v2.0 - ${agentStatus.polling ? 'Polling' : 'Idle'} (${stats.jobsProcessed || 0} jobs)`
+    : 'BytePhase Agent v2.0 - Not Registered';
+  tray.setToolTip(status);
+
+  // Push updated data to tray popup if it's open
+  if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+    trayPopupWindow.webContents.send('status-update', {
+      stats,
+      registered,
+      polling: agentStatus.polling
+    });
+  }
+}
+
+/**
+ * Open settings window
+ */
+function openSettings(page = 'tally-integration') {
+  if (settingsWindow) {
+    settingsWindow.focus();
+    settingsWindow.webContents.send('navigate-to', page);
+    return;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 900,
+    height: 650,
+    minWidth: 800,
+    minHeight: 550,
+    title: 'BytePhase Agent - Settings',
+    resizable: true,
+    backgroundColor: '#0f0f1a',
+    icon: getWindowIcon(),
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  settingsWindow.loadFile(path.join(__dirname, 'ui', 'settings-v2.html'));
+
   settingsWindow.webContents.on('did-finish-load', () => {
-    settingsWindow.webContents.send('set-tab', tab);
+    settingsWindow.webContents.send('navigate-to', page);
   });
 
   settingsWindow.on('closed', () => {
@@ -436,52 +558,100 @@ async function handleDeepLink(url) {
   console.log('[APP] Processing deep link:', url);
 
   try {
-    // Process the deep link
-    const result = await deepLinkService.processDeepLink(url);
+    // Parse the deep link first to determine action
+    const parsed = deepLinkService.parseDeepLink(url);
 
-    if (result.success) {
-      // Check if this is a directory scan request
-      if (result.type === 'scan') {
-        // Open dedicated scan window
+    if (!parsed.success) {
+      NotificationHelper.showConnectionError(parsed.error);
+      return;
+    }
+
+    // Directory scan — process immediately
+    if (parsed.action === 'scan-directory') {
+      const result = await deepLinkService.handleScanDirectory(parsed.params.token);
+      if (result.success) {
         console.log('[APP] Opening directory scan window...');
         openDirectoryScanWindow(result.scanData);
+      } else {
+        NotificationHelper.showConnectionError(result.error);
+      }
+      return;
+    }
+
+    // Partner connect — show approval window
+    if (parsed.action === 'partner-connect' || parsed.action === 'connect') {
+      const tokenService = require('./services/token.service');
+      const validation = tokenService.validateToken(parsed.params.token);
+
+      if (!validation.success) {
+        NotificationHelper.showConnectionError(validation.error);
         return;
       }
 
-      // Regular connection flow
-      // Show success notification
-      NotificationHelper.showConnectionSuccess(result.shopId);
+      // Show partner connection approval window
+      openPartnerConnectWindow({
+        token: parsed.params.token,
+        partnerName: (validation.payload.metadata && validation.payload.metadata.partner_name) || 'BytePhase Partner Platform',
+        partnerUrl: (validation.payload.metadata && validation.payload.metadata.partner_url) || 'partner.bytephase.com',
+        shopName: (validation.payload.metadata && validation.payload.metadata.shop_name) || 'Unknown Shop'
+      });
+      return;
+    }
 
-      // Start polling if not already running
+    // Fallback: process as generic deep link
+    const result = await deepLinkService.processDeepLink(url);
+    if (result.success) {
+      NotificationHelper.showConnectionSuccess(result.shopId);
       if (!agentStatus.polling) {
         await pollingService.start();
         agentStatus.polling = true;
-        console.log('[APP] Polling started after deep link connection');
       }
-
       agentStatus.registered = true;
-      updateTrayMenu();
-
-      console.log('[APP] Deep link connection successful');
-
+      updateTrayStatus();
     } else {
-      // Show error notification
       NotificationHelper.showConnectionError(result.error);
-
-      // Open settings window to allow manual entry
-      console.error('[APP] Deep link connection failed:', result.error);
-      setTimeout(() => {
-        openSettings('setup');
-      }, 2000); // Delay to allow notification to show
+      setTimeout(() => openSettings('overview'), 2000);
     }
 
   } catch (error) {
     console.error('[APP] Error handling deep link:', error);
     NotificationHelper.showConnectionError(error.message);
-    setTimeout(() => {
-      openSettings('setup');
-    }, 2000);
+    setTimeout(() => openSettings('overview'), 2000);
   }
+}
+
+/**
+ * Open partner connection approval window
+ */
+function openPartnerConnectWindow(connectData) {
+  if (partnerConnectWindow) {
+    partnerConnectWindow.focus();
+    return;
+  }
+
+  partnerConnectWindow = new BrowserWindow({
+    width: 480,
+    height: 560,
+    resizable: false,
+    center: true,
+    backgroundColor: '#0f0f1a',
+    title: 'Partner Connection - BytePhase Agent',
+    icon: getWindowIcon(),
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  partnerConnectWindow.loadFile(path.join(__dirname, 'ui', 'partner-connect.html'));
+
+  partnerConnectWindow.webContents.on('did-finish-load', () => {
+    partnerConnectWindow.webContents.send('init-connect', connectData);
+  });
+
+  partnerConnectWindow.on('closed', () => {
+    partnerConnectWindow = null;
+  });
 }
 
 /**
@@ -493,6 +663,7 @@ function openDirectoryScanWindow(scanData) {
     height: 800,
     title: 'Directory Scan - BytePhase Agent',
     resizable: false,
+    icon: getWindowIcon(),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -529,7 +700,7 @@ async function togglePolling() {
     agentStatus.polling = true;
     console.log('[APP] Polling started');
   }
-  updateTrayMenu();
+  updateTrayStatus();
 }
 
 /**
@@ -594,10 +765,90 @@ function startStatusUpdates() {
     // Get module statuses
     agentStatus.modules = moduleManager.getAll();
 
-    // Update tray menu
-    updateTrayMenu();
+    // Update tray tooltip and popup
+    updateTrayStatus();
+
+    // Push status to settings window if open
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.webContents.send('status-update', {
+        stats: agentStatus.stats,
+        modules: agentStatus.modules,
+        registered: agentStatus.registered,
+        polling: agentStatus.polling
+      });
+    }
   }, 5000); // Update every 5 seconds
 }
+
+/**
+ * IPC Handlers for tray popup
+ */
+
+// Get tray popup data (aggregates multiple sources)
+ipcMain.handle('get-tray-popup-data', async () => {
+  const registered = authService.isRegistered();
+  const agentInfo = registered ? authService.getAgentInfo() : {};
+  const stats = pollingService.getStats();
+  const moduleCounts = moduleManager.getCount();
+
+  // Tally connection status
+  let tallyStatus = { connected: false, version: null, company: null };
+  const tallyModule = moduleManager.getModule('tally');
+  if (tallyModule && tallyModule.enabled) {
+    try {
+      const health = await tallyModule.healthCheck();
+      tallyStatus = {
+        connected: health.healthy,
+        version: health.details ? health.details.version : null,
+        company: health.details ? health.details.company : null
+      };
+    } catch (e) { /* leave defaults */ }
+  }
+
+  // Directory Scanner status
+  const scannerModule = moduleManager.getModule('directory-scanner');
+  const scannerActive = scannerModule && scannerModule.enabled;
+
+  // Tally sync stats (from module if available)
+  let tallySyncStats = { lastSyncTime: null, totalItemsSynced: 0 };
+  if (tallyModule && tallyModule.syncStats) {
+    tallySyncStats = tallyModule.syncStats;
+  }
+
+  return {
+    registered,
+    agentInfo,
+    stats,
+    moduleCounts,
+    tallyStatus,
+    tallySyncStats,
+    scannerActive,
+    version: app.getVersion()
+  };
+});
+
+// Open settings from tray popup
+ipcMain.on('open-settings-from-tray', (event, page) => {
+  openSettings(page || 'tally-integration');
+  if (trayPopupWindow && !trayPopupWindow.isDestroyed()) {
+    trayPopupWindow.close();
+    trayPopupWindow = null;
+  }
+});
+
+// Trigger immediate Tally sync from tray popup
+ipcMain.handle('trigger-tally-sync', async (event, syncType) => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.scheduler) {
+      return { success: false, error: 'Tally module not available' };
+    }
+    const result = await tallyModule.scheduler.triggerImmediateSync(syncType || 'delta');
+    return result;
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
 
 /**
  * IPC Handlers for settings window
@@ -614,6 +865,16 @@ ipcMain.handle('get-agent-info', () => {
     moduleStats: moduleManager.getCount(),
     jobStats: jobRouter.getStats()
   };
+});
+
+// Open logs folder
+ipcMain.handle('open-logs-folder', () => {
+  const logsPath = path.join(app.getPath('userData'), 'logs');
+  // Ensure logs directory exists
+  if (!fs.existsSync(logsPath)) {
+    fs.mkdirSync(logsPath, { recursive: true });
+  }
+  require('electron').shell.openPath(logsPath);
 });
 
 // Quick setup with API key
@@ -642,7 +903,7 @@ ipcMain.handle('connect-with-api-key', async (event, apiKey) => {
     if (result.modules && Object.keys(result.modules).length > 0) {
       console.log('[APP] Configuring modules from cloud...');
 
-      const configPath = path.join(__dirname, 'config', 'agent.config.json');
+      const configPath = getConfigPath();
       let config = {};
 
       if (fs.existsSync(configPath)) {
@@ -689,7 +950,7 @@ ipcMain.handle('connect-with-api-key', async (event, apiKey) => {
 
     agentStatus.registered = true;
     agentStatus.modules = moduleManager.getAll();
-    updateTrayMenu();
+    updateTrayStatus();
 
     console.log('[APP] Agent configured and connected successfully');
 
@@ -712,7 +973,7 @@ ipcMain.handle('save-credentials', async (event, credentials) => {
     }
 
     agentStatus.registered = true;
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -728,7 +989,7 @@ ipcMain.handle('clear-credentials', () => {
     authService.clearCredentials();
     agentStatus.registered = false;
     agentStatus.polling = false;
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -779,7 +1040,7 @@ ipcMain.handle('enable-module', async (event, moduleName, config) => {
   try {
     await moduleManager.enable(moduleName, config);
     agentStatus.modules = moduleManager.getAll();
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -793,7 +1054,7 @@ ipcMain.handle('disable-module', async (event, moduleName) => {
   try {
     await moduleManager.disable(moduleName);
     agentStatus.modules = moduleManager.getAll();
-    updateTrayMenu();
+    updateTrayStatus();
 
     return { success: true };
   } catch (error) {
@@ -807,6 +1068,179 @@ ipcMain.handle('get-module-health', async () => {
   try {
     const health = await moduleManager.healthCheck();
     return { success: true, health };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+/**
+ * IPC Handlers for partner connection
+ */
+
+// Approve partner connection from approval window
+ipcMain.handle('approve-partner-connection', async (event, token) => {
+  try {
+    const result = await deepLinkService.handleConnect(token);
+
+    if (result.success) {
+      // Start polling
+      if (!agentStatus.polling) {
+        await pollingService.start();
+        agentStatus.polling = true;
+      }
+      agentStatus.registered = true;
+      updateTrayStatus();
+
+      NotificationHelper.showConnectionSuccess(result.shopId);
+      return result;
+    }
+
+    return { success: false, error: result.error || 'Connection failed' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Cancel partner connection
+ipcMain.on('cancel-partner-connection', () => {
+  if (partnerConnectWindow && !partnerConnectWindow.isDestroyed()) {
+    partnerConnectWindow.close();
+  }
+});
+
+/**
+ * IPC Handlers for Tally configuration
+ */
+
+// Get Tally module config
+ipcMain.handle('get-tally-config', () => {
+  const tallyModule = moduleManager.getModule('tally');
+  if (!tallyModule) {
+    return { success: false, error: 'Tally module not found' };
+  }
+  return { success: true, config: tallyModule.config };
+});
+
+// Save Tally module config
+ipcMain.handle('save-tally-config', async (event, config) => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule) {
+      return { success: false, error: 'Tally module not found' };
+    }
+
+    // Merge config
+    Object.assign(tallyModule.config, config);
+
+    // Update tally service connection params
+    if (tallyModule.tallyService) {
+      if (config.tallyHost) tallyModule.tallyService.host = config.tallyHost;
+      if (config.tallyPort) tallyModule.tallyService.port = config.tallyPort;
+      tallyModule.tallyService.baseUrl = `http://${tallyModule.tallyService.host}:${tallyModule.tallyService.port}`;
+    }
+
+    // Persist to agent.config.json
+    const configPath = getConfigPath();
+    const agentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    agentConfig.modules.tally.config = { ...agentConfig.modules.tally.config, ...config };
+    fs.writeFileSync(configPath, JSON.stringify(agentConfig, null, 2));
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Detect Tally company name
+ipcMain.handle('detect-tally-company', async () => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.tallyService) {
+      return { success: false, error: 'Tally module not available' };
+    }
+
+    // Clear cached value to force re-detection
+    tallyModule.tallyService.companyName = null;
+    const company = await tallyModule.tallyService.getCompanyName();
+    return { success: true, company };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Get Tally sync stats
+ipcMain.handle('get-tally-sync-stats', () => {
+  const tallyModule = moduleManager.getModule('tally');
+  if (!tallyModule) {
+    return { success: false, error: 'Tally module not found' };
+  }
+  return {
+    success: true,
+    syncStats: tallyModule.syncStats || { lastSyncTime: null, totalItemsSynced: 0, syncHistory: [] }
+  };
+});
+
+// List all open companies in Tally
+ipcMain.handle('list-tally-companies', async () => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.tallyService) {
+      return { success: false, error: 'Tally module not available' };
+    }
+    const companies = await tallyModule.tallyService.listCompanies();
+    return { success: true, companies };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// List stock groups for a company
+ipcMain.handle('list-tally-stock-groups', async (event, companyName) => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule || !tallyModule.tallyService) {
+      return { success: false, error: 'Tally module not available' };
+    }
+    const groups = await tallyModule.tallyService.listStockGroups(companyName);
+    return { success: true, groups };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Save Tally sync configuration
+ipcMain.handle('save-tally-sync-config', async (event, syncConfig) => {
+  try {
+    const tallyModule = moduleManager.getModule('tally');
+    if (!tallyModule) {
+      return { success: false, error: 'Tally module not found' };
+    }
+
+    // Merge sync config into module config
+    Object.assign(tallyModule.config, syncConfig);
+
+    // Update sync service config
+    if (tallyModule.syncService) {
+      Object.assign(tallyModule.syncService.config, syncConfig);
+    }
+
+    // Update scheduler config
+    if (tallyModule.scheduler) {
+      tallyModule.scheduler.updateConfig(syncConfig);
+
+      // Start scheduler if company is newly selected
+      if (syncConfig.selectedCompany && !tallyModule.scheduler._running) {
+        tallyModule.scheduler.start();
+      }
+    }
+
+    // Persist to agent.config.json
+    const configPath = getConfigPath();
+    const agentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    agentConfig.modules.tally.config = { ...agentConfig.modules.tally.config, ...syncConfig };
+    fs.writeFileSync(configPath, JSON.stringify(agentConfig, null, 2));
+
+    return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -840,7 +1274,7 @@ ipcMain.on('notify-agent-connected', async (event, data) => {
 
   try {
     const axios = require('axios');
-    const url = `${data.cloudUrl}/api/directory-scans/${data.jobId}/progress`;
+    const url = `${data.cloudUrl}/api/agent/directory-scans/${data.jobId}/progress`;
     console.log('[APP] Sending notification to:', url);
 
     const response = await axios.post(
@@ -857,6 +1291,7 @@ ipcMain.on('notify-agent-connected', async (event, data) => {
       {
         headers: {
           'X-Agent-API-Key': data.apiKey,
+          'X-Tenant': data.shopId ? data.shopId.toString() : '',
           'Content-Type': 'application/json'
         },
         timeout: 10000

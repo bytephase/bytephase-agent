@@ -627,6 +627,7 @@
             console.log('[UI] Sending notify-agent-connected with:', {
                 jobId: data.jobId,
                 scanId: data.scanId,
+                shopId: data.shopId,
                 cloudUrl: data.cloudUrl,
                 apiKey: data.apiKey ? 'present' : 'missing'
             });
@@ -635,6 +636,7 @@
                 ipcRenderer.send('notify-agent-connected', {
                     jobId: data.jobId,
                     scanId: data.scanId,
+                    shopId: data.shopId,
                     cloudUrl: data.cloudUrl,
                     apiKey: data.apiKey
                 });

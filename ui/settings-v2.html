@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>BytePhase Agent - Settings</title>
+  <link rel="stylesheet" href="settings-v2.css">
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <img src="../assets/bytephase-logo.png" class="sidebar-logo" onerror="this.style.display='none'; document.getElementById('sidebarFallbackTitle').style.display='block'">
+      <p class="sidebar-agent-label">Agent</p>
+      <h2 id="sidebarFallbackTitle" class="sidebar-fallback-title" style="display:none;">BytePhase Agent</h2>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-item active" data-page="tally-integration" onclick="navigateTo('tally-integration')">
+        <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+        <span>Tally Integration</span>
+      </div>
+      <div class="nav-item" data-page="system-tray" onclick="navigateTo('system-tray')">
+        <svg viewBox="0 0 24 24"><path d="M7.5 21.5c.8.8 2.1.8 2.8 0L12 19.8l1.7 1.7c.8.8 2.1.8 2.8 0 .8-.8.8-2.1 0-2.8l-1.7-1.7 1.7-1.7c.8-.8.8-2.1 0-2.8-.8-.8-2.1-.8-2.8 0L12 14.2l-1.7-1.7c-.8-.8-2.1-.8-2.8 0-.8.8-.8 2.1 0 2.8l1.7 1.7-1.7 1.7c-.8.8-.8 2 0 2.8zM12 2C6.5 2 2 6.5 2 12c0 1.4.3 2.7.8 3.9l1.5-.7C3.5 14.2 3.2 13.1 3.2 12c0-4.8 3.9-8.8 8.8-8.8s8.8 3.9 8.8 8.8c0 1.1-.2 2.2-.6 3.2l1.5.7c.5-1.2.8-2.5.8-3.9 0-5.5-4.5-10-10-10z"/></svg>
+        <span>System Tray</span>
+      </div>
+      <div class="nav-item" data-page="overview" onclick="navigateTo('overview')">
+        <svg viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+        <span>Overview</span>
+      </div>
+      <div class="nav-item" data-page="logs" onclick="navigateTo('logs')">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        <span>Logs</span>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <p id="sidebarVersion">Version 2.0.0</p>
+      <p>&copy; 2026 BytePhase</p>
+    </div>
+  </div>
+
+  <!-- Content Area -->
+  <div class="content">
+
+    <!-- ========== TALLY INTEGRATION PAGE ========== -->
+    <div class="page active" id="page-tally-integration">
+      <h1 class="page-title">Tally Integration Settings</h1>
+      <p class="page-subtitle">Configure your Tally connection and sync preferences</p>
+
+      <!-- Sub-tabs -->
+      <div class="sub-tabs">
+        <button class="sub-tab active" data-tab="configuration" onclick="switchSubTab('configuration')">Configuration</button>
+        <button class="sub-tab" data-tab="sync-status" onclick="switchSubTab('sync-status')">Sync Status</button>
+      </div>
+
+      <!-- Configuration Sub-tab -->
+      <div class="sub-content active" id="tab-configuration">
+
+        <!-- Status Banner -->
+        <div class="status-banner disconnected" id="tallyStatusBanner">
+          <div class="status-banner-left">
+            <span class="status-dot-sm yellow" id="tallyStatusDot"></span>
+            <span id="tallyStatusText">Disconnected</span>
+          </div>
+          <span class="status-indicator yellow" id="tallyStatusIndicator"></span>
+        </div>
+
+        <!-- Tally Server Configuration -->
+        <div class="card">
+          <h3 class="card-title">Tally Server Configuration</h3>
+          <p class="card-subtitle">Configure the connection to your Tally server</p>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Tally Host</label>
+              <input type="text" class="form-input" id="tallyHost" value="localhost" placeholder="localhost">
+            </div>
+            <div class="form-group">
+              <label>Tally Port</label>
+              <input type="number" class="form-input" id="tallyPort" value="9000" placeholder="9000">
+            </div>
+          </div>
+
+          <!-- Auto-detect Company Name -->
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <div class="toggle-label">Auto-detect Company Name</div>
+              <div class="toggle-desc">Automatically detect the active company from Tally</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="autoDetectCompany" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- Manual Company Name (shown when auto-detect is off) -->
+          <div class="form-group" id="companyNameGroup" style="display: none;">
+            <label>Company Name</label>
+            <input type="text" class="form-input" id="tallyCompanyName" placeholder="Enter company name">
+          </div>
+
+          <!-- Auto-detect Tally Version -->
+          <div class="toggle-row">
+            <div class="toggle-row-text">
+              <div class="toggle-label">Auto-detect Tally Version</div>
+              <div class="toggle-desc">Automatically detect the Tally version</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="autoDetectVersion" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- Manual Tally Version (shown when auto-detect is off) -->
+          <div class="form-group" id="versionGroup" style="display: none;">
+            <label>Tally Version</label>
+            <input type="text" class="form-input" id="tallyVersion" placeholder="e.g., TallyPrime 4.0">
+          </div>
+
+          <div class="btn-row">
+            <button class="btn btn-primary" id="testConnectionBtn" onclick="testTallyConnection()">Test Connection</button>
+            <button class="btn btn-ghost" id="detectCompanyBtn" onclick="detectCompany()">Detect Company</button>
+          </div>
+        </div>
+
+        <!-- Company Selection (shown after successful connection test) -->
+        <div class="card" id="companySelectionCard" style="display: none;">
+          <h3 class="card-title">Company Selection</h3>
+          <p class="card-subtitle">Select the Tally company to sync inventory from</p>
+
+          <div class="form-group">
+            <label>Active Company</label>
+            <div class="select-row">
+              <select class="form-input" id="companySelect" onchange="onCompanySelected()">
+                <option value="">-- Select Company --</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" id="refreshCompaniesBtn" onclick="refreshCompanies()" title="Refresh company list">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stock Group Filter (shown after company is selected) -->
+        <div class="card" id="stockGroupCard" style="display: none;">
+          <h3 class="card-title">Stock Group Filter</h3>
+          <p class="card-subtitle">Select which stock groups to sync. Empty selection syncs all groups.</p>
+
+          <div class="stock-group-actions">
+            <button class="btn btn-ghost btn-sm" onclick="selectAllGroups()">Select All</button>
+            <button class="btn btn-ghost btn-sm" onclick="deselectAllGroups()">Deselect All</button>
+            <span class="stock-group-count" id="groupSelectionCount">0 groups selected</span>
+          </div>
+
+          <div class="stock-group-tree" id="stockGroupTree">
+            <div class="empty-state">
+              <p>Loading stock groups...</p>
+            </div>
+          </div>
+
+          <div class="btn-row" style="margin-top: 16px;">
+            <button class="btn btn-primary" onclick="saveSyncConfig()">Save Sync Configuration</button>
+          </div>
+        </div>
+
+        <!-- Partner Connection Demo -->
+        <div class="card">
+          <h3 class="card-title">Partner Connection Demo</h3>
+          <p class="card-subtitle">Test the deep link partner connection flow</p>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+            Click the button below to simulate a partner connection request via deep link (bytephase://partner-connect)
+          </p>
+          <button class="btn btn-ghost" id="testPartnerBtn" onclick="testPartnerConnection()">Test Partner Connection</button>
+        </div>
+      </div>
+
+      <!-- Sync Status Sub-tab -->
+      <div class="sub-content" id="tab-sync-status">
+
+        <!-- Sync Progress Inline (visible during sync) -->
+        <div class="sync-progress-inline" id="syncProgressInline" style="display: none;">
+          <div class="sync-progress-header">
+            <span class="sync-progress-badge" id="syncProgressBadge">Syncing...</span>
+            <span class="sync-progress-message" id="syncProgressMessage">Initializing...</span>
+          </div>
+          <div class="progress-bar-container compact">
+            <div class="progress-bar" id="syncInlineProgressBar"></div>
+          </div>
+          <div class="sync-progress-detail" id="syncProgressDetail">0 / 0 items</div>
+        </div>
+
+        <!-- Sync Overview -->
+        <div class="card">
+          <h3 class="card-title">Sync Overview</h3>
+          <p class="card-subtitle">Current sync status and statistics</p>
+
+          <div class="sync-overview four-col">
+            <div>
+              <div class="sync-stat-label">Last Delta Sync</div>
+              <div class="sync-stat-value" id="lastDeltaSyncTime">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="#6b6b80"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                Never
+              </div>
+              <div class="sync-stat-sub" id="lastDeltaSyncDate">--</div>
+            </div>
+            <div>
+              <div class="sync-stat-label">Last Full Sync</div>
+              <div class="sync-stat-value" id="lastFullSyncTime">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="#6b6b80"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                Never
+              </div>
+              <div class="sync-stat-sub" id="lastFullSyncDate">--</div>
+            </div>
+            <div>
+              <div class="sync-stat-label">Status</div>
+              <div class="sync-stat-value" id="syncCurrentStatus">
+                <span class="sync-status-badge idle">Idle</span>
+              </div>
+              <div class="sync-stat-sub" id="syncFailureCount">No failures</div>
+            </div>
+            <div>
+              <div class="sync-stat-label">Sync Interval</div>
+              <select class="sync-select" id="syncIntervalSelect" onchange="saveSyncInterval()">
+                <option value="5">5 minutes</option>
+                <option value="15">15 minutes</option>
+                <option value="30" selected>30 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+              </select>
+              <div class="sync-stat-sub">Business hours frequency</div>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button class="btn btn-success" id="deltaSyncNowBtn" onclick="triggerSyncNow('delta')">
+              <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+              Delta Sync Now
+            </button>
+            <button class="btn btn-ghost" id="fullSyncNowBtn" onclick="triggerSyncNow('full')">
+              <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+              Full Sync Now
+            </button>
+          </div>
+        </div>
+
+        <!-- Sync History -->
+        <div class="card">
+          <h3 class="card-title">Sync History</h3>
+          <p class="card-subtitle">Last 10 sync operations</p>
+
+          <div class="sync-history-list" id="syncHistoryList">
+            <div class="empty-state">
+              <p>No sync history yet</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== SYSTEM TRAY PAGE ========== -->
+    <div class="page" id="page-system-tray">
+      <h1 class="page-title">System Tray</h1>
+      <p class="page-subtitle">System tray and notification preferences</p>
+
+      <div class="card">
+        <h3 class="card-title">Tray Behavior</h3>
+        <p class="card-subtitle">Configure how the agent appears in your system tray</p>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-card-label">Tray Status</div>
+            <div class="stat-card-value success">Active</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Polling Status</div>
+            <div class="stat-card-value" id="pollingStatusValue">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Jobs Processed</div>
+            <div class="stat-card-value" id="jobsProcessedValue">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Queue Pending</div>
+            <div class="stat-card-value" id="queuePendingValue">0</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ========== LOGS PAGE ========== -->
+    <div class="page" id="page-logs">
+      <h1 class="page-title">Logs</h1>
+      <p class="page-subtitle">Real-time agent activity and debug output</p>
+
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="logs-toolbar">
+          <div class="logs-toolbar-left">
+            <span class="logs-count" id="logsCount">0 entries</span>
+          </div>
+          <div class="logs-toolbar-right">
+            <button class="btn btn-sm btn-secondary" onclick="clearLogs()">Clear</button>
+            <button class="btn btn-sm btn-secondary" onclick="viewLogs()">Open Folder</button>
+          </div>
+        </div>
+        <div class="logs-container" id="logsContainer">
+          <p class="logs-placeholder">Logs will appear here...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== OVERVIEW PAGE ========== -->
+    <div class="page" id="page-overview">
+      <h1 class="page-title">Overview</h1>
+      <p class="page-subtitle">Agent registration and connection setup</p>
+
+      <!-- Registration Status -->
+      <div class="status-banner disconnected" id="registrationBanner">
+        <div class="status-banner-left">
+          <span class="status-dot-sm yellow" id="regStatusDot"></span>
+          <span id="regStatusText">Not Registered</span>
+        </div>
+        <span class="status-indicator yellow" id="regStatusIndicator"></span>
+      </div>
+
+      <!-- Quick / Advanced Setup Toggle -->
+      <div class="setup-toggle">
+        <button class="setup-toggle-btn active" id="quickSetupToggle" onclick="toggleSetup('quick')">Quick Setup</button>
+        <button class="setup-toggle-btn" id="advancedSetupToggle" onclick="toggleSetup('advanced')">Advanced</button>
+      </div>
+
+      <!-- Quick Setup -->
+      <div class="card" id="quickSetupCard">
+        <h3 class="card-title">Quick Setup</h3>
+        <p class="card-subtitle">Enter your API key from BytePhase CRM to get started</p>
+
+        <div class="form-group">
+          <label>API Key</label>
+          <input type="text" class="form-input" id="quickApiKey" placeholder="Paste your API key here">
+        </div>
+
+        <button class="btn btn-primary" id="quickConnectBtn" onclick="quickConnect()">Connect</button>
+      </div>
+
+      <!-- Advanced Setup -->
+      <div class="card" id="advancedSetupCard" style="display: none;">
+        <h3 class="card-title">Advanced Setup</h3>
+        <p class="card-subtitle">Manual configuration for advanced users</p>
+
+        <div class="form-group">
+          <label>Cloud Service URL</label>
+          <input type="text" class="form-input" id="advCloudUrl" placeholder="https://api.bytephase.com">
+        </div>
+        <div class="form-group">
+          <label>API Key</label>
+          <input type="text" class="form-input" id="advApiKey" placeholder="Your API key">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Agent ID</label>
+            <input type="text" class="form-input" id="advAgentId" placeholder="Agent ID">
+          </div>
+          <div class="form-group">
+            <label>Shop ID</label>
+            <input type="text" class="form-input" id="advShopId" placeholder="Shop ID">
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="advSaveBtn" onclick="saveAdvancedConfig()">Save Configuration</button>
+      </div>
+
+      <!-- Stats -->
+      <div class="card">
+        <h3 class="card-title">Agent Statistics</h3>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-card-label">Registration</div>
+            <div class="stat-card-value" id="overviewRegStatus">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Modules Active</div>
+            <div class="stat-card-value" id="overviewModules">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Jobs Processed</div>
+            <div class="stat-card-value" id="overviewJobs">--</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Last Poll</div>
+            <div class="stat-card-value" id="overviewLastPoll">--</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Danger Zone -->
+      <div class="danger-zone">
+        <h4>Danger Zone</h4>
+        <p>Clear all saved credentials and disconnect from the cloud.</p>
+        <button class="btn btn-danger" onclick="clearConfiguration()">Clear Configuration</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ========== SYNC PROGRESS MODAL ========== -->
+  <div class="modal-overlay" id="syncProgressModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Tally Sync in Progress</h3>
+        <button class="modal-close" onclick="closeSyncModal()">&times;</button>
+      </div>
+
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="syncProgressBar"></div>
+      </div>
+
+      <div class="progress-stats">
+        <span id="syncPercentage">0% complete</span>
+        <span id="syncItemProgress">0 / 0</span>
+      </div>
+
+      <div class="current-operation">
+        <label>Current Operation</label>
+        <div id="syncCurrentOp">Initializing...</div>
+      </div>
+
+      <div class="stat-boxes">
+        <div class="stat-box">
+          <div class="stat-box-label">Items Processed</div>
+          <div class="stat-box-value" id="syncProcessedCount">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-box-label">Total Items</div>
+          <div class="stat-box-value" id="syncTotalCount">0</div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="cancelSync()">
+          <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="settings-v2-renderer.js"></script>
+</body>
+</html>

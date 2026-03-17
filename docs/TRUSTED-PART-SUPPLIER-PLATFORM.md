@@ -262,30 +262,406 @@ The agent is production-ready with:
 
 | Task | Module / Service | Priority |
 |------|-----------------|----------|
-| `tally.stock.read` — Full implementation | Tally Module | 🔴 Critical |
-| `tally.stock.sync` — Scheduled sync to partner platform | Tally Module | 🔴 Critical |
-| Sync status reporting to Supplier Dashboard | Polling Service | 🔴 Critical |
+| `tally.stock.read` — Full XML implementation | Tally Module | 🔴 Critical |
+| `tally.stock.sync.delta` — Changed items only sync | Tally Module | 🔴 Critical |
+| `tally.stock.sync.full` — Complete inventory sync | Tally Module | 🔴 Critical |
+| `tally.stock.sync.partial` — Single item refresh on order | Tally Module | 🔴 Critical |
+| Tally company detection and selection UI | Agent Settings UI | 🔴 Critical |
+| Stock group fetch and checkbox filter UI | Agent Settings UI | 🔴 Critical |
+| Internal sync scheduler (delta every 30 min, full daily) | Tally Module | 🔴 Critical |
+| SQLite sync state machine (sessions, chunks, state) | Queue Service | 🔴 Critical |
+| Sync status tab in Agent settings | Agent Settings UI | 🔴 Critical |
+| Partner sync API endpoints on platform | Backend | 🔴 Critical |
+| `bytephase://partner-connect` deep link flow | DeepLink Service | 🟡 Medium |
 | `tally.ledger.read` — Supplier/vendor list | Tally Module | 🟡 Medium |
-| Auto-detect Tally company and stock groups | Tally Service | 🟡 Medium |
-| Partner API endpoints on `partner.bytephase.com` | Backend | 🔴 Critical |
+| Agent-side normalization rules engine | Tally Service | 🟡 Medium |
 | Agent onboarding flow for Partners | Settings UI | 🟡 Medium |
 
-### Tally Sync Job Flow (Target)
+---
+
+## Job Management — Who Does What
+
+This is the most important operational question. There are two job origins but only one job manager: **the Agent**.
 
 ```
-BytePhase Agent (Supplier Machine)
-  │
-  ├─ Every 15–30 minutes:
-  │     1. POST to Tally localhost:9000 — request stock list (XML)
-  │     2. Parse XML response → normalized inventory array
-  │     3. POST to partner.bytephase.com/api/partner/inventory/sync
-  │     4. Receive acknowledgement + diff (what changed)
-  │     5. Log sync result
-  │
-  └─ On demand (triggered by partner.bytephase.com):
-        1. Cloud sends job via /api/agent/poll
-        2. JobRouter → Tally Module → execute sync immediately
-        3. Result reported back to cloud
+┌─────────────────────────────────────────────────────────────────┐
+│                    JOB MANAGEMENT OVERVIEW                       │
+│                                                                  │
+│  JOB ORIGIN 1: Agent Internal Scheduler                         │
+│  ─────────────────────────────────────────────────────────────  │
+│  Agent timer fires → creates job internally → executes          │
+│  No platform involved until result is pushed                    │
+│  Used for: delta sync (every 30 min), full sync (daily 2 AM)   │
+│                                                                  │
+│  JOB ORIGIN 2: Platform Queues a Job                            │
+│  ─────────────────────────────────────────────────────────────  │
+│  Platform creates job record in its DB                          │
+│  Agent polls /api/agent/poll every 30s → receives the job      │
+│  Agent executes → reports result via /api/agent/result         │
+│  Used for: Sync Now button, single-item refresh, first setup   │
+│                                                                  │
+│  RULE: Agent always executes. Platform can request, never force.│
+│  If Agent is offline → platform jobs queue until Agent returns. │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Job Types and Ownership
+
+| Job Type | Who Creates It | Who Executes It | Trigger |
+|----------|---------------|-----------------|---------|
+| `tally.stock.sync.delta` | Agent (internal scheduler) | Agent | Every 30 min timer |
+| `tally.stock.sync.full` | Agent (internal scheduler) | Agent | Daily at 2 AM |
+| `tally.stock.sync.delta` | Platform (job queue) | Agent | Supplier clicks "Sync Now" |
+| `tally.stock.sync.full` | Platform (job queue) | Agent | Manual full sync requested |
+| `tally.stock.sync.partial` | Platform (job queue) | Agent | Buyer places an order |
+| `tally.company.detect` | Agent (on settings open) | Agent | UI interaction |
+| `tally.groups.fetch` | Agent (on settings open) | Agent | UI interaction |
+
+### Job Lifecycle (Platform-Originated)
+
+```
+Platform creates job
+  { id, type: "tally.stock.sync.delta", status: "pending", partner_id }
+  ↓
+Agent polls /api/agent/poll every 30 seconds
+  ← receives job payload
+  ↓
+Agent checks: is another sync already running? (mutex lock)
+  → YES: requeue job for next poll cycle, skip
+  → NO: proceed
+  ↓
+Agent executes job (queries Tally, uploads result)
+  ↓
+Agent reports to /api/agent/result
+  { job_id, status: "success"|"failed", items_synced, duration_ms }
+  ↓
+Platform marks job complete / failed
+  ↓
+Supplier dashboard reflects latest sync status
+```
+
+### Job Lifecycle (Agent Internal)
+
+```
+Agent internal timer fires (e.g., 30-min delta sync)
+  ↓
+Agent creates job record in its own SQLite
+  { id, type: "delta", status: "running", started_at }
+  ↓
+Executes sync (Tally → Platform)
+  ↓
+On success:
+  → Updates SQLite: status = "complete", last_delta_sync_at = now
+  → Pushes sync result to platform /api/partner/sync-status
+  → Updates tray menu stats
+
+On failure:
+  → Updates SQLite: status = "failed", consecutive_failures++
+  → Does NOT update last_delta_sync_at (preserves old timestamp)
+  → Schedules retry (next normal cycle)
+  → After 3 failures: escalate tray notification
+```
+
+---
+
+## Sync Architecture — Full Detail
+
+### The Core Constraint
+
+Tally has **no webhooks, no push notifications, no change streams**. It is a passive desktop app that only responds when queried via XML. You cannot know what changed without asking. The solution is Tally's `LASTMODIFIEDDATE` field on every stock item — this enables efficient delta sync.
+
+### Two Sync Modes
+
+#### Delta Sync (Every 30 min — normal operation)
+
+Only fetches items modified since the last successful sync. For 5 lakh items where 200 changed — Tally returns only 200 items.
+
+**Step 1 — Agent queries Tally with date filter:**
+```xml
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>Changed Stock Items</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>ABC Electronics Pvt Ltd</SVCURRENTCOMPANY>
+        <SVFROMDATE>20250312</SVFROMDATE>  <!-- last_delta_sync_at date -->
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="Changed Stock Items" ISMODIFY="No">
+            <TYPE>Stock Item</TYPE>
+            <FETCH>Name, Parent, ClosingBalance, Rate, BaseUnits, LastModifiedDate</FETCH>
+            <FILTER>IsModifiedAfter</FILTER>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="IsModifiedAfter">
+            $LastModifiedDate > ##SVFromDate
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>
+```
+
+**Step 2 — Agent pushes only changed items to Platform:**
+```json
+POST /api/partner/inventory/sync
+{
+  "sync_type": "delta",
+  "session_id": "uuid-here",
+  "since_timestamp": "2025-03-12T10:00:00Z",
+  "chunk_index": 1,
+  "total_chunks": 1,
+  "items": [ ...200 changed items... ]
+}
+```
+
+**Step 3 — Platform merges, never touching `display_name`:**
+```sql
+UPDATE partner_inventory
+SET quantity = ?, unit_price = ?, last_synced_at = NOW()
+WHERE partner_id = ? AND tally_item_name = ?
+-- display_name is NEVER touched by any sync operation
+```
+
+**Step 4 — Agent updates `last_delta_sync_at` in SQLite to now (only on success)**
+
+#### Full Sync (Daily at 2 AM + First Setup + On Demand)
+
+Fetches all items regardless of modified date. Required for deletion detection and as a safety net.
+
+**Why delta sync alone is not enough:**
+- If an item is **deleted** in Tally, it disappears — delta sync will never report something that no longer exists
+- Clock skew or Tally crash can corrupt `LASTMODIFIEDDATE` values
+- First-time setup has no `last_sync_at` baseline
+
+**Full sync additionally handles deletions:**
+```
+Platform receives all 5 lakh items in the session
+  ↓
+On /sync/complete:
+  Items present in DB but NOT in this sync → mark is_active = false
+  Items present in this sync but NOT in DB → INSERT new record
+  Items present in both → UPDATE quantity, price only
+  ↓
+Buyers instantly see out-of-stock / unavailable items removed
+```
+
+#### Partial Sync (Single Item — On Order)
+
+When a buyer places an order, the platform immediately queues a targeted refresh for just that item:
+
+```json
+{
+  "type": "tally.stock.sync.partial",
+  "items": ["Samsung S21 Battery OEM"]
+}
+```
+
+Agent queries Tally for that one item specifically, pushes updated quantity to platform within 30 seconds of the order being placed. If stock hits zero → platform marks item out-of-stock for other buyers.
+
+---
+
+## All Sync Scenarios
+
+### Normal Operations
+
+```
+SCENARIO 1: Delta sync — 200 items changed out of 5 lakh
+──────────────────────────────────────────────────────────
+Agent timer fires (30 min)
+  → Queries Tally: items modified after last_delta_sync_at
+  → Tally returns 200 changed items
+  → Agent pushes 200 items (single chunk, under 500)
+  → Platform updates 200 records, leaves 499,800 untouched
+  → Agent sets last_delta_sync_at = now
+  → Total time: ~5 seconds
+
+SCENARIO 2: Full sync — all 5 lakh items
+──────────────────────────────────────────
+Agent scheduler fires (2 AM)
+  → Queries Tally with no date filter, in batches of 200 items per XML request
+  → Receives all 5 lakh items across multiple XML calls
+  → Chunks into 1000 batches of 500 items each
+  → Uploads all chunks with session_id
+  → Sends /sync/complete → Platform does full merge + deletion detection
+  → Agent sets last_full_sync_at = now
+  → Total time: ~5–10 minutes depending on machine
+
+SCENARIO 3: Platform-triggered "Sync Now"
+──────────────────────────────────────────
+Supplier clicks "Sync Now" on partner.bytephase.com
+  → Platform creates job: { type: "tally.stock.sync.delta", status: "pending" }
+  → Agent picks up job within 30 seconds on next poll
+  → Runs delta sync immediately
+  → Reports result: { job_id, status: "success", items_synced: 47 }
+  → Dashboard shows "Last synced: just now ✓"
+
+SCENARIO 4: Buyer places order — partial sync
+──────────────────────────────────────────────
+Buyer orders 5x Samsung S21 Battery
+  → Platform creates job: { type: "tally.stock.sync.partial", items: ["Samsung S21 Battery OEM"] }
+  → Agent picks up within 30 seconds
+  → Queries Tally for that one item only
+  → Tally returns: qty = 3 (was 8, 5 just sold)
+  → Platform updates qty to 3 for that item
+  → If qty = 0 → platform marks item out-of-stock
+
+SCENARIO 5: First-time setup
+──────────────────────────────
+Supplier connects via bytephase://partner-connect?token=...
+  → Agent saves Partner API key
+  → Immediately triggers full sync
+  → All selected stock groups uploaded
+  → Platform populates inventory for first time
+  → Agent sets last_delta_sync_at = now, last_full_sync_at = now
+  → Future cycles: delta every 30 min, full daily at 2 AM
+```
+
+### Failure Scenarios
+
+```
+FAILURE 1: Tally is closed when sync fires
+───────────────────────────────────────────
+Agent sends XML to localhost:9000
+  → Connection refused
+  → Does NOT update last_delta_sync_at (old timestamp preserved)
+  → consecutive_failures++ in SQLite
+  → Tray notification: "Tally unreachable — sync skipped"
+  → Retries on next normal cycle (30 min)
+  → After 3 consecutive failures:
+      Notification escalates: "Tally unreachable for 1.5 hours. Please open Tally."
+  → Next successful sync catches ALL changes since last success
+
+FAILURE 2: Internet drops mid-upload (chunked resilience)
+───────────────────────────────────────────────────────────
+Agent has read all items from Tally (stored in SQLite session)
+  → Chunk 4 of 12 fails to POST to platform
+  → Marks chunk 4 as "pending" in tally_sync_chunks
+  → Stops uploading — no point sending chunk 5+ without session continuity
+  → On next Agent poll cycle: resumes from chunk 4 automatically
+  → Platform holds all received chunks uncommitted until /sync/complete arrives
+  → Buyers see no change until full session completes — no dirty state
+
+FAILURE 3: Platform returns error on a chunk
+─────────────────────────────────────────────
+Platform returns 500 or 422
+  → Agent logs error + raw response body
+  → marks chunk as "failed", attempts++
+  → After 3 attempts on same chunk → marks session "failed"
+  → Queues a fresh full sync for next daily run
+  → Supplier dashboard shows: "Last sync failed — full recovery scheduled"
+
+FAILURE 4: Agent crashes mid-sync
+───────────────────────────────────
+Agent restarts (Electron single-instance lock)
+  → On startup: scans SQLite for "in_progress" sessions
+  → Finds incomplete session → resumes from last unsynced chunk
+  → If session is older than 2 hours → abandons it, marks failed
+  → Schedules fresh delta sync immediately
+
+FAILURE 5: Malformed XML from Tally (corrupt item data)
+────────────────────────────────────────────────────────
+XML parser throws on one item
+  → Agent catches error per-item (not per-batch)
+  → Skips the bad item, logs raw XML for debugging
+  → Continues sync with remaining items
+  → Reports skipped count to platform: { items_synced: 198, items_skipped: 2 }
+  → Does NOT fail the entire sync for one bad item
+
+FAILURE 6: Clock skew — Tally machine clock changed
+─────────────────────────────────────────────────────
+last_delta_sync_at ends up in the future
+  → Delta sync returns 0 results (nothing newer than a future date)
+  → Agent detects: result count = 0 AND last_delta_sync_at > now
+  → Auto-resets last_delta_sync_at to now - 24 hours
+  → Runs a wider delta sync as safety measure
+  → Logs clock skew event to platform
+
+FAILURE 7: Agent offline for multiple days
+───────────────────────────────────────────
+Agent comes back online after 3 days offline
+  → last_delta_sync_at is 3 days old
+  → Delta sync fires with 3-day-old timestamp
+  → Tally returns everything modified in last 3 days
+  → All missed changes caught automatically
+  → No manual intervention required
+  → Platform-queued jobs from the 3 days are still in queue — Agent processes them in order
+```
+
+---
+
+## SQLite State Machine (Agent Side)
+
+The Agent's SQLite is the single source of truth for sync state. This is what makes every failure recoverable.
+
+```sql
+-- Single row per partner connection — tracks overall sync health
+CREATE TABLE tally_sync_state (
+  id                    INTEGER PRIMARY KEY DEFAULT 1,
+  last_delta_sync_at    INTEGER,   -- Unix timestamp, updated ONLY on success
+  last_full_sync_at     INTEGER,   -- Unix timestamp, updated ONLY on success
+  consecutive_failures  INTEGER DEFAULT 0,  -- reset to 0 on any success
+  current_session_id    TEXT,      -- NULL when idle
+  sync_status           TEXT DEFAULT 'idle'  -- 'idle'|'running'|'failed'
+);
+
+-- One row per sync attempt
+CREATE TABLE tally_sync_sessions (
+  id            TEXT PRIMARY KEY,  -- UUID
+  sync_type     TEXT,              -- 'delta'|'full'|'partial'
+  status        TEXT,              -- 'in_progress'|'complete'|'failed'
+  total_items   INTEGER,
+  total_chunks  INTEGER,
+  started_at    INTEGER,
+  completed_at  INTEGER
+);
+
+-- One row per chunk per session
+CREATE TABLE tally_sync_chunks (
+  session_id      TEXT,
+  chunk_index     INTEGER,
+  item_count      INTEGER,
+  status          TEXT,    -- 'pending'|'uploading'|'synced'|'failed'
+  attempts        INTEGER DEFAULT 0,
+  last_attempt_at INTEGER,
+  PRIMARY KEY (session_id, chunk_index)
+);
+```
+
+**Critical rule:** `last_delta_sync_at` is ONLY written after a 100% successful sync. A failure at any point preserves the old timestamp — the next cycle automatically re-fetches everything from the last known-good point. Nothing is ever missed.
+
+---
+
+## Platform-Side Sync API (To Be Built)
+
+```
+POST /api/partner/inventory/sync
+  Body: { sync_type, session_id, chunk_index, total_chunks, since_timestamp?, items[] }
+  Response: { accepted: true, chunk_index }
+  Behavior: Stores chunk, does NOT apply to live inventory yet
+
+POST /api/partner/inventory/sync/complete
+  Body: { session_id, sync_type }
+  Response: { committed: true, items_updated, items_added, items_deactivated }
+  Behavior:
+    - delta: merge changed items only
+    - full: full merge + mark missing items as is_active = false
+    - partial: update specific items only
+
+GET /api/partner/sync/status
+  Response: { last_delta_sync_at, last_full_sync_at, total_items, sync_health }
+  Used by: Supplier Dashboard, Agent tray menu
+
+POST /api/agent/poll (existing endpoint — extended)
+  Returns new job types:
+    { type: "tally.stock.sync.delta" }
+    { type: "tally.stock.sync.full" }
+    { type: "tally.stock.sync.partial", payload: { items: ["item name"] } }
 ```
 
 ---
