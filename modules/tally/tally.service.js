@@ -258,7 +258,7 @@ class TallyService {
     const collection = result?.ENVELOPE?.BODY?.[0]?.DATA?.[0]?.COLLECTION?.[0];
     if (collection && collection.COMPANY) {
       for (const comp of collection.COMPANY) {
-        const name = comp.NAME?.[0] || comp.$.NAME;
+        const name = this._text(comp.NAME?.[0]) || comp.$?.NAME;
         if (name) companies.push(name);
       }
     }
@@ -307,8 +307,8 @@ class TallyService {
     const collection = result?.ENVELOPE?.BODY?.[0]?.DATA?.[0]?.COLLECTION?.[0];
     if (collection && collection.STOCKGROUP) {
       for (const group of collection.STOCKGROUP) {
-        const name = group.NAME?.[0] || group.$.NAME;
-        const parent = group.PARENT?.[0] || null;
+        const name = this._text(group.NAME?.[0]) || group.$?.NAME;
+        const parent = this._text(group.PARENT?.[0]) || null;
         if (name) {
           groups.push({ name, parent: parent === 'Primary' ? null : parent });
         }
@@ -345,7 +345,7 @@ class TallyService {
               <TDLMESSAGE>
                 <COLLECTION NAME="StockItemList">
                   <TYPE>Stock Item</TYPE>
-                  <FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, BASEUNITS, NARRATION, MAILINGNAME, LASTMODIFIEDDATE, DESCRIPTION, GUID</FETCH>
+                  <FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, BASEUNITS, NARRATION, MAILINGNAME, DESCRIPTION, GUID, ALTERID</FETCH>
                 </COLLECTION>
               </TDLMESSAGE>
             </TDL>
@@ -380,11 +380,10 @@ class TallyService {
   }
 
   /**
-   * Read stock items changed since a given date (delta sync)
+   * Read stock items changed since a given ALTERID (delta sync)
    */
-  async readChangedStockItems(companyName, sinceDate) {
-    const formattedDate = this.formatDate(sinceDate);
-    console.log(`[TALLY] Reading changed stock items since ${formattedDate} for ${companyName}`);
+  async readChangedStockItems(companyName, sinceAlterId) {
+    console.log(`[TALLY] Reading changed stock items with ALTERID > ${sinceAlterId} for ${companyName}`);
 
     const xml = `
       <ENVELOPE>
@@ -403,10 +402,10 @@ class TallyService {
               <TDLMESSAGE>
                 <COLLECTION NAME="ChangedStockItems">
                   <TYPE>Stock Item</TYPE>
-                  <FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, BASEUNITS, NARRATION, MAILINGNAME, LASTMODIFIEDDATE, DESCRIPTION, GUID</FETCH>
-                  <FILTER>ModifiedFilter</FILTER>
+                  <FETCH>NAME, PARENT, CLOSINGBALANCE, CLOSINGRATE, BASEUNITS, NARRATION, MAILINGNAME, DESCRIPTION, GUID, ALTERID</FETCH>
+                  <FILTER>AlteredFilter</FILTER>
                 </COLLECTION>
-                <SYSTEM TYPE="Formulae" NAME="ModifiedFilter">$$LASTMODIFIEDDATE > $$Date:"${formattedDate}"</SYSTEM>
+                <SYSTEM TYPE="Formulae" NAME="AlteredFilter">$ALTERID > ${sinceAlterId}</SYSTEM>
               </TDLMESSAGE>
             </TDL>
           </DESC>
@@ -482,26 +481,37 @@ class TallyService {
   }
 
   /**
+   * Extract text from an xml2js node value.
+   * xml2js may return a plain string or an object like { _: "text", $: { attr: "val" } }
+   */
+  _text(value) {
+    if (value == null) return null;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object' && value._ != null) return String(value._);
+    return String(value);
+  }
+
+  /**
    * Parse a single stock item XML element into a normalized object
    */
   _parseStockItem(xmlItem) {
-    const name = xmlItem.NAME?.[0] || xmlItem.$.NAME;
+    const name = this._text(xmlItem.NAME?.[0]) || xmlItem.$?.NAME;
     if (!name) return null;
 
-    const closingBalance = xmlItem.CLOSINGBALANCE?.[0] || '';
-    const closingRate = xmlItem.CLOSINGRATE?.[0] || '';
+    const closingBalance = this._text(xmlItem.CLOSINGBALANCE?.[0]) || '';
+    const closingRate = this._text(xmlItem.CLOSINGRATE?.[0]) || '';
     const { quantity, unit } = this._parseQuantity(closingBalance);
 
     return {
       name,
-      parent: xmlItem.PARENT?.[0] || null,
+      parent: this._text(xmlItem.PARENT?.[0]) || null,
       closingBalance: quantity,
       rate: this._parseRate(closingRate),
-      baseUnits: unit || xmlItem.BASEUNITS?.[0] || null,
-      description: xmlItem.DESCRIPTION?.[0] || xmlItem.NARRATION?.[0] || null,
-      alias: xmlItem.MAILINGNAME?.[0] || null,
-      lastModifiedDate: xmlItem.LASTMODIFIEDDATE?.[0] || null,
-      guid: xmlItem.GUID?.[0] || null
+      baseUnits: unit || this._text(xmlItem.BASEUNITS?.[0]) || null,
+      description: this._text(xmlItem.DESCRIPTION?.[0]) || this._text(xmlItem.NARRATION?.[0]) || null,
+      alias: this._text(xmlItem.MAILINGNAME?.[0]) || null,
+      guid: this._text(xmlItem.GUID?.[0]) || null,
+      alterId: parseInt(this._text(xmlItem.ALTERID?.[0])) || 0
     };
   }
 
