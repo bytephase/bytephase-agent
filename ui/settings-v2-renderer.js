@@ -106,6 +106,11 @@ async function testTallyConnection() {
   btn.disabled = true;
 
   try {
+    // Save host/port before testing so the backend uses the current values
+    const host = document.getElementById('tallyHost').value || 'localhost';
+    const port = parseInt(document.getElementById('tallyPort').value) || 9000;
+    await ipcRenderer.invoke('save-tally-config', { tallyHost: host, tallyPort: port });
+
     const result = await ipcRenderer.invoke('test-tally-connection');
     updateTallyStatusBanner(result.success);
 
