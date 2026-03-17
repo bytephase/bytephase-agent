@@ -43,27 +43,20 @@ class TallySyncService {
       eventBus.publish('tally:sync:start', { sessionId, syncType: 'delta', companyName });
 
       const state = queueService.getSyncState();
-      const lastDeltaSync = state?.last_delta_sync_at;
+      const lastAlterId = state?.last_alter_id || 0;
 
       // If no baseline exists, escalate to full sync
-      if (!lastDeltaSync) {
-        console.log('[SYNC] No previous delta sync baseline, escalating to full sync');
+      if (!lastAlterId) {
+        console.log('[SYNC] No previous ALTERID baseline, escalating to full sync');
         this.isSyncing = false;
         return await this.executeFullSync(companyName, syncGroups);
-      }
-
-      // Clock skew detection: if last sync is in the future, reset to 24h ago
-      let sinceDate = new Date(lastDeltaSync);
-      if (sinceDate.getTime() > Date.now()) {
-        console.warn('[SYNC] Clock skew detected, resetting to 24h ago');
-        sinceDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
       }
 
       queueService.updateSyncState({ sync_status: 'syncing' });
 
       this._emitProgress(sessionId, 'delta', 'reading', 0, 0, 'Reading changed items from Tally...');
 
-      const items = await this.tallyService.readChangedStockItems(companyName, sinceDate);
+      const items = await this.tallyService.readChangedStockItems(companyName, lastAlterId);
 
       // Filter by sync groups if specified
       const filtered = syncGroups.length > 0
@@ -85,6 +78,9 @@ class TallySyncService {
         return { success: true, itemCount: 0, syncType: 'delta' };
       }
 
+      // Track max ALTERID from this batch
+      const maxAlterId = Math.max(...filtered.map(item => item.alterId || 0));
+
       // Chunk and upload
       const chunks = this._chunkArray(filtered, CHUNK_SIZE);
       const result = await this._processChunks(sessionId, 'delta', chunks, filtered.length);
@@ -92,6 +88,7 @@ class TallySyncService {
       if (result.success) {
         queueService.updateSyncState({
           last_delta_sync_at: Date.now(),
+          last_alter_id: maxAlterId,
           sync_status: 'idle',
           consecutive_failures: 0
         });
@@ -148,6 +145,9 @@ class TallySyncService {
         return { success: true, itemCount: 0, syncType: 'full' };
       }
 
+      // Track max ALTERID for delta sync baseline
+      const maxAlterId = Math.max(...items.map(item => item.alterId || 0));
+
       // Add delay for large reads to reduce Tally load
       if (items.length > 500) {
         console.log(`[SYNC] Large dataset (${items.length} items), adding read delay`);
@@ -161,6 +161,7 @@ class TallySyncService {
         queueService.updateSyncState({
           last_full_sync_at: Date.now(),
           last_delta_sync_at: Date.now(),
+          last_alter_id: maxAlterId,
           sync_status: 'idle',
           consecutive_failures: 0
         });

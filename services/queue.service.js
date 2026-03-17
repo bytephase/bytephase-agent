@@ -64,6 +64,7 @@ class QueueService {
           id INTEGER PRIMARY KEY CHECK (id = 1),
           last_delta_sync_at INTEGER,
           last_full_sync_at INTEGER,
+          last_alter_id INTEGER DEFAULT 0,
           consecutive_failures INTEGER DEFAULT 0,
           sync_status TEXT DEFAULT 'idle',
           selected_company TEXT,
@@ -73,6 +74,11 @@ class QueueService {
 
       // Insert default row if not exists
       this.db.run(`INSERT OR IGNORE INTO tally_sync_state (id, sync_status, consecutive_failures) VALUES (1, 'idle', 0)`);
+
+      // Migration: add last_alter_id column if missing (existing installs)
+      try {
+        this.db.run(`ALTER TABLE tally_sync_state ADD COLUMN last_alter_id INTEGER DEFAULT 0`);
+      } catch (e) { /* column already exists */ }
 
       this.db.run(`
         CREATE TABLE IF NOT EXISTS tally_sync_sessions (
@@ -308,7 +314,7 @@ class QueueService {
   updateSyncState(fields) {
     if (!this.db) return;
 
-    const allowed = ['last_delta_sync_at', 'last_full_sync_at', 'consecutive_failures', 'sync_status', 'selected_company', 'updated_at'];
+    const allowed = ['last_delta_sync_at', 'last_full_sync_at', 'last_alter_id', 'consecutive_failures', 'sync_status', 'selected_company', 'updated_at'];
     const updates = [];
     const values = [];
 
